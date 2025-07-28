@@ -32,8 +32,7 @@ class GameViewController: UIViewController {
             view.showsPhysics = false
         }
         
-        // Initialize game manager
-        _ = GameManager.shared
+        // Game manager will be initialized by GardenScene
     }
 
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {

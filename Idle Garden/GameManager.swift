@@ -9,16 +9,26 @@ import Foundation
 import SpriteKit
 
 class GameManager: ObservableObject {
-    static let shared = GameManager()
+    static let shared: GameManager = {
+        let instance = GameManager()
+        return instance
+    }()
     
     @Published var gameState: GameState
     @Published var offlineProgress: (gpEarned: Int, plantsReady: Int) = (0, 0)
     
     private var updateTimer: Timer?
     private let saveInterval: TimeInterval = 30 // Save every 30 seconds
+    private var isInitialized = false
     
     private init() {
         self.gameState = SaveManager.shared.loadGame()
+    }
+    
+    func initialize() {
+        guard !isInitialized else { return }
+        isInitialized = true
+        
         checkOfflineProgress()
         startUpdateTimer()
     }
@@ -26,6 +36,7 @@ class GameManager: ObservableObject {
     // MARK: - Game Initialization
     
     func startUpdateTimer() {
+        updateTimer?.invalidate() // Prevent multiple timers
         updateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.updateGame()
         }
@@ -57,9 +68,16 @@ class GameManager: ObservableObject {
             isReady: false
         )
         
-        // Ensure plants array is large enough to accommodate the plot index
+        // Ensure the plants array is large enough
         while gameState.plants.count <= plotIndex {
-            gameState.plants.append(PlantData(typeId: "", plantedTime: Date(), lastHarvestTime: nil, level: 0, isReady: false))
+            let emptySlot = PlantData(
+                typeId: "",
+                plantedTime: Date(),
+                lastHarvestTime: nil,
+                level: 0,
+                isReady: false
+            )
+            gameState.plants.append(emptySlot)
         }
         
         gameState.plants[plotIndex] = newPlant
@@ -68,9 +86,20 @@ class GameManager: ObservableObject {
     
     func canPlantAtPlot(_ plotIndex: Int) -> Bool {
         let maxPlots = getMaxGardenPlots()
-        guard plotIndex < maxPlots && plotIndex >= 0 else { return false }
+        if plotIndex >= maxPlots || plotIndex < 0 {
+            return false
+        }
         
-        // Check if plot is empty (either no plant at index or invalid plant)
+        // Check if there's already a plant at this index
+        if plotIndex < gameState.plants.count {
+            let plant = gameState.plants[plotIndex]
+            return plant.typeId.isEmpty || plant.level == 0
+        }
+        
+        return true
+    }
+    
+    func isPlotEmpty(_ plotIndex: Int) -> Bool {
         if plotIndex >= gameState.plants.count {
             return true
         }
@@ -88,14 +117,18 @@ class GameManager: ObservableObject {
     func updatePlants() {
         for i in 0..<gameState.plants.count {
             let plant = gameState.plants[i]
-            guard !plant.typeId.isEmpty, 
-                  plant.level > 0,
-                  let plantType = plant.plantType else { continue }
+            
+            // Skip empty plots
+            if plant.typeId.isEmpty || plant.level == 0 {
+                continue
+            }
+            
+            guard let plantType = plant.plantType else { continue }
             
             let timeSincePlanting = Date().timeIntervalSince(plant.plantedTime)
-            let growthTime = plantType.growthTime
+            let adjustedGrowthTime = plantType.growthTime / getGrowthSpeedMultiplier()
             
-            if timeSincePlanting >= growthTime && !plant.isReady {
+            if timeSincePlanting >= adjustedGrowthTime && !plant.isReady {
                 gameState.plants[i].isReady = true
             }
         }
@@ -105,10 +138,7 @@ class GameManager: ObservableObject {
         guard index < gameState.plants.count else { return 0 }
         
         let plant = gameState.plants[index]
-        guard plant.isReady, 
-              !plant.typeId.isEmpty, 
-              plant.level > 0,
-              let plantType = plant.plantType else { return 0 }
+        guard plant.isReady, let plantType = plant.plantType else { return 0 }
         
         let gpEarned = calculateGpEarned(for: plant, plantType: plantType)
         
@@ -123,12 +153,12 @@ class GameManager: ObservableObject {
     }
     
     func calculateGpEarned(for plant: PlantData, plantType: PlantType) -> Int {
-        let baseGp = Double(plantType.gpPerHour) * plantType.growthTime / 3600.0
+        let baseGp = Int(Double(plantType.gpPerHour) * (plantType.growthTime / 3600.0))
         let levelMultiplier = 1.0 + (Double(plant.level - 1) * 0.1) // 10% increase per level
         let upgradeMultiplier = getGpMultiplier()
+        let prestigeMultiplier = getPrestigeMultiplier()
         
-        let finalGp = baseGp * levelMultiplier * upgradeMultiplier
-        return max(1, Int(finalGp)) // Ensure at least 1 GP is earned
+        return Int(Double(baseGp) * levelMultiplier * upgradeMultiplier * prestigeMultiplier)
     }
     
     // MARK: - Upgrade System
@@ -154,6 +184,7 @@ class GameManager: ObservableObject {
         gameState.gardenPoints -= cost
         gameState.upgrades[upgradeType.rawValue] = currentLevel + 1
         
+        saveGame()
         return true
     }
     
@@ -186,10 +217,10 @@ class GameManager: ObservableObject {
         let autoHarvestLevel = getUpgradeLevel(.autoHarvest)
         guard autoHarvestLevel > 0 else { return }
         
-        let autoHarvestChance = Double(autoHarvestLevel) * 0.1 // 10% chance per level
+        let autoHarvestChance = Double(autoHarvestLevel) * 0.02 // 2% chance per level per second
         
         for i in 0..<gameState.plants.count {
-            if gameState.plants[i].isReady {
+            if gameState.plants[i].isReady && !gameState.plants[i].typeId.isEmpty {
                 if Double.random(in: 0...1) < autoHarvestChance {
                     _ = harvestPlant(at: i)
                 }
@@ -204,13 +235,29 @@ class GameManager: ObservableObject {
         offlineProgress = progress
         
         if progress.gpEarned > 0 || progress.plantsReady > 0 {
-            gameState.gardenPoints += progress.gpEarned
+            // Don't auto-apply offline progress, let the user claim it
             gameState.lastSaveTime = Date()
         }
     }
     
     func claimOfflineProgress() {
         gameState.gardenPoints += offlineProgress.gpEarned
+        
+        // Mark plants as ready if they finished growing offline
+        for i in 0..<gameState.plants.count {
+            let plant = gameState.plants[i]
+            if !plant.typeId.isEmpty && !plant.isReady {
+                if let plantType = plant.plantType {
+                    let timeSincePlanting = Date().timeIntervalSince(plant.plantedTime)
+                    let adjustedGrowthTime = plantType.growthTime / getGrowthSpeedMultiplier()
+                    
+                    if timeSincePlanting >= adjustedGrowthTime {
+                        gameState.plants[i].isReady = true
+                    }
+                }
+            }
+        }
+        
         offlineProgress = (0, 0)
         saveGame()
     }
@@ -223,7 +270,7 @@ class GameManager: ObservableObject {
     
     func calculateWisdomPoints() -> Int {
         let gp = Double(gameState.gardenPoints)
-        return Int(sqrt(gp / 1000000)) // Square root of GP/1M
+        return max(1, Int(sqrt(gp / 1000000))) // Square root of GP/1M, minimum 1
     }
     
     func performPrestige() -> Bool {
@@ -231,11 +278,12 @@ class GameManager: ObservableObject {
         
         let wisdomPoints = calculateWisdomPoints()
         
-        // Reset game state but keep wisdom points
+        // Reset game state but keep wisdom points and prestige count
         let oldWisdomPoints = gameState.wisdomPoints
+        let oldPrestigeCount = gameState.prestigeCount
         gameState = GameState()
         gameState.wisdomPoints = oldWisdomPoints + wisdomPoints
-        gameState.prestigeCount += 1
+        gameState.prestigeCount = oldPrestigeCount + 1
         
         saveGame()
         return true
@@ -266,7 +314,9 @@ class GameManager: ObservableObject {
     // MARK: - Utility Functions
     
     func formatNumber(_ number: Int) -> String {
-        if number >= 1_000_000 {
+        if number >= 1_000_000_000 {
+            return String(format: "%.1fB", Double(number) / 1_000_000_000)
+        } else if number >= 1_000_000 {
             return String(format: "%.1fM", Double(number) / 1_000_000)
         } else if number >= 1_000 {
             return String(format: "%.1fK", Double(number) / 1_000)
@@ -276,15 +326,31 @@ class GameManager: ObservableObject {
     }
     
     func formatTime(_ timeInterval: TimeInterval) -> String {
-        let hours = Int(timeInterval) / 3600
-        let minutes = Int(timeInterval) / 60 % 60
-        let seconds = Int(timeInterval) % 60
-        
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            return String(format: "%d:%02d", minutes, seconds)
-        }
+        return TimeFormatter.formatTime(timeInterval)
+    }
+    
+    // MARK: - Plant Management Helpers
+    
+    func getPlantAt(_ index: Int) -> PlantData? {
+        guard index >= 0 && index < gameState.plants.count else { return nil }
+        let plant = gameState.plants[index]
+        return plant.typeId.isEmpty ? nil : plant
+    }
+    
+    func removePlantAt(_ index: Int) {
+        guard index >= 0 && index < gameState.plants.count else { return }
+        gameState.plants[index] = PlantData(typeId: "", plantedTime: Date(), lastHarvestTime: nil, level: 0, isReady: false)
+    }
+    
+    // MARK: - Statistics
+    
+    func getTotalPlantsGrown() -> Int {
+        return gameState.plants.filter { !$0.typeId.isEmpty && $0.level > 0 }.count
+    }
+    
+    func getTotalGPEarned() -> Int {
+        // This would need to be tracked separately in game state for accuracy
+        return gameState.gardenPoints
     }
     
     // MARK: - Cleanup
@@ -292,4 +358,4 @@ class GameManager: ObservableObject {
     deinit {
         updateTimer?.invalidate()
     }
-} 
+}

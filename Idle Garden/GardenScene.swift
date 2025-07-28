@@ -7,6 +7,7 @@
 
 import SpriteKit
 import GameplayKit
+import Combine
 
 class GardenScene: SKScene {
     
@@ -18,12 +19,11 @@ class GardenScene: SKScene {
     private var bottomToolbar: BottomToolbarNode?
     private var plantShop: PlantShopNode?
     private var upgradeMenu: UpgradeMenuNode?
-    private var achievementMenu: AchievementMenuNode?
     private var settingsMenu: SettingsMenuNode?
+    private var tutorialOverlay: TutorialOverlay?
+    private var cancellables = Set<AnyCancellable>()
     
     // UI Elements
-    private var gpLabel: SKLabelNode?
-    private var seedsLabel: SKLabelNode?
     private var offlineProgressNode: OfflineProgressNode?
     
     // Constants
@@ -40,6 +40,7 @@ class GardenScene: SKScene {
         setupGardenGrid()
         setupUI()
         setupGameManager()
+        setupTutorial()
     }
     
     private func setupScene() {
@@ -62,7 +63,15 @@ class GardenScene: SKScene {
         let totalGridHeight = CGFloat(gridHeight) * gridSize.height + CGFloat(gridHeight - 1) * gridSpacing
         
         let startX = (size.width - totalGridWidth) / 2
-        let startY = (size.height - totalGridHeight) / 2 + bottomBarHeight
+        let startY = (size.height - totalGridHeight) / 2 + bottomBarHeight/2
+        
+        // Clear existing grid
+        for row in gardenGrid {
+            for plot in row {
+                plot.removeFromParent()
+            }
+        }
+        gardenGrid.removeAll()
         
         gardenGrid = Array(repeating: Array(repeating: GardenPlot(size: gridSize), count: gridWidth), count: gridHeight)
         
@@ -85,9 +94,7 @@ class GardenScene: SKScene {
                 // Load existing plant if any
                 if plotIndex < gameManager.gameState.plants.count {
                     let plantData = gameManager.gameState.plants[plotIndex]
-                    if !plantData.typeId.isEmpty && plantData.level > 0 {
-                        plot.setPlant(plantData)
-                    }
+                    plot.setPlant(plantData)
                 }
             }
         }
@@ -97,7 +104,6 @@ class GardenScene: SKScene {
         setupTopBar()
         setupBottomToolbar()
         setupOfflineProgress()
-        setupTutorial()
     }
     
     private func setupTopBar() {
@@ -131,12 +137,27 @@ class GardenScene: SKScene {
     }
     
     private func setupGameManager() {
+        gameManager.initialize() // Initialize the game manager
+        
         // Observe game state changes
         gameManager.$gameState
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateUI()
             }
             .store(in: &cancellables)
+    }
+    
+    private func setupTutorial() {
+        tutorialOverlay = TutorialOverlay()
+        tutorialOverlay?.delegate = self
+        tutorialOverlay?.position = CGPoint(x: size.width/2, y: size.height/2)
+        tutorialOverlay?.zPosition = 1000
+        tutorialOverlay?.name = "tutorialOverlay"
+        addChild(tutorialOverlay!)
+        
+        TutorialManager.shared.delegate = self
+        TutorialManager.shared.startTutorialIfNeeded()
     }
     
     // MARK: - UI Updates
@@ -214,27 +235,18 @@ class GardenScene: SKScene {
     // MARK: - Achievement Menu
     
     private func showAchievementMenu() {
-        guard achievementMenu == nil else { return }
-        
-        achievementMenu = AchievementMenuNode(size: CGSize(width: size.width * 0.9, height: size.height * 0.8))
-        achievementMenu?.position = CGPoint(x: size.width/2, y: size.height/2)
-        achievementMenu?.zPosition = 100
-        achievementMenu?.delegate = self
-        addChild(achievementMenu!)
+        let achievementMenu = AchievementMenuNode(size: CGSize(width: size.width * 0.9, height: size.height * 0.8))
+        achievementMenu.position = CGPoint(x: size.width/2, y: size.height/2)
+        achievementMenu.zPosition = 100
+        addChild(achievementMenu)
         
         // Add dimming background
         let dimBackground = SKSpriteNode(color: .black, size: size)
         dimBackground.alpha = 0.5
         dimBackground.position = CGPoint(x: size.width/2, y: size.height/2)
         dimBackground.zPosition = 99
-        dimBackground.name = "achievementDimBackground"
+        dimBackground.name = "dimBackground"
         addChild(dimBackground)
-    }
-    
-    private func hideAchievementMenu() {
-        achievementMenu?.removeFromParent()
-        achievementMenu = nil
-        childNode(withName: "achievementDimBackground")?.removeFromParent()
     }
     
     // MARK: - Settings Menu
@@ -280,7 +292,11 @@ class GardenScene: SKScene {
             return
         }
         
-        // Settings menu handles its own touches via touchesBegan
+        // Check if touch is on settings menu
+        if let settingsMenu = settingsMenu, settingsMenu.contains(location) {
+            settingsMenu.handleTouch(location)
+            return
+        }
         
         // Check if touch is on a garden plot
         for row in gardenGrid {
@@ -296,9 +312,6 @@ class GardenScene: SKScene {
     // MARK: - Game Loop
     
     override func update(_ currentTime: TimeInterval) {
-        // Update game manager (plant growth, etc.)
-        gameManager.updateGame()
-        
         // Update plant animations and timers
         for row in gardenGrid {
             for plot in row {
@@ -322,6 +335,11 @@ extension GardenScene: GardenPlotDelegate {
                 
                 // Update UI to reflect new GP total
                 updateUI()
+                
+                // Tutorial progression
+                if TutorialManager.shared.isTutorialActive() {
+                    TutorialManager.shared.checkStepCompletion("harvest_plant")
+                }
             }
         } else {
             // Show plant shop to plant something
@@ -363,21 +381,24 @@ extension GardenScene: TopBarDelegate {
     }
     
     private func showPrestigeConfirmation(wisdomPoints: Int) {
-        let alert = UIAlertController(
-            title: "Garden Rebirth",
-            message: "Reset your garden to gain \(wisdomPoints) Wisdom Points? This will permanently boost your growth speed and earnings.",
-            preferredStyle: .alert
-        )
-        
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Rebirth", style: .destructive) { _ in
-            if self.gameManager.performPrestige() {
-                self.resetGarden()
-            }
-        })
-        
-        // Present alert from view controller
-        if let viewController = self.view?.window?.rootViewController {
+        // Create and show confirmation alert using the scene's view
+        DispatchQueue.main.async { [weak self] in
+            guard let scene = self,
+                  let viewController = scene.view?.window?.rootViewController else { return }
+            
+            let alert = UIAlertController(
+                title: "Garden Rebirth",
+                message: "Reset your garden to gain \(wisdomPoints) Wisdom Points? This will permanently boost your growth speed and earnings.",
+                preferredStyle: .alert
+            )
+            
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            alert.addAction(UIAlertAction(title: "Rebirth", style: .destructive) { _ in
+                if scene.gameManager.performPrestige() {
+                    scene.resetGarden()
+                }
+            })
+            
             viewController.present(alert, animated: true)
         }
     }
@@ -389,6 +410,9 @@ extension GardenScene: TopBarDelegate {
                 plot.clearPlant()
             }
         }
+        
+        // Rebuild garden grid for new plot count
+        setupGardenGrid()
         
         // Update UI
         updateUI()
@@ -420,10 +444,23 @@ extension GardenScene: PlantShopDelegate {
         // Find first empty plot
         for row in gardenGrid {
             for plot in row {
-                if !plot.hasPlant && gameManager.canPlantAtPlot(plot.plotIndex) {
+                if !plot.hasPlant {
                     if gameManager.plantSeed(plantType, at: plot.plotIndex) {
-                        let plantData = gameManager.gameState.plants[plot.plotIndex]
-                        plot.setPlant(plantData)
+                        // Make sure we have enough plants in the array
+                        while gameManager.gameState.plants.count <= plot.plotIndex {
+                            // This shouldn't happen, but just in case
+                            break
+                        }
+                        
+                        if plot.plotIndex < gameManager.gameState.plants.count {
+                            plot.setPlant(gameManager.gameState.plants[plot.plotIndex])
+                        }
+                        
+                        // Tutorial progression
+                        if TutorialManager.shared.isTutorialActive() {
+                            TutorialManager.shared.checkStepCompletion("plant_seed")
+                        }
+                        
                         return
                     }
                 }
@@ -443,7 +480,15 @@ extension GardenScene: UpgradeMenuDelegate {
         if gameManager.purchaseUpgrade(upgradeType) {
             // Update garden grid if garden plots were upgraded
             if upgradeType == .gardenPlots {
-                updateGardenGrid()
+                setupGardenGrid()
+            }
+            
+            // Update UI
+            updateUI()
+            
+            // Tutorial progression
+            if TutorialManager.shared.isTutorialActive() {
+                TutorialManager.shared.checkStepCompletion("buy_upgrade")
             }
         }
     }
@@ -466,14 +511,6 @@ extension GardenScene: OfflineProgressDelegate {
     }
 }
 
-// MARK: - Achievement Menu Delegate
-
-extension GardenScene: AchievementMenuDelegate {
-    func achievementMenuClosed() {
-        hideAchievementMenu()
-    }
-}
-
 // MARK: - Settings Menu Delegate
 
 extension GardenScene: SettingsMenuDelegate {
@@ -482,22 +519,24 @@ extension GardenScene: SettingsMenuDelegate {
     }
     
     func resetGameTapped() {
-        let alert = UIAlertController(
-            title: "Reset Game",
-            message: "Are you sure you want to reset your progress? This cannot be undone.",
-            preferredStyle: .alert
-        )
-        
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Reset", style: .destructive) { _ in
-            self.gameManager.resetGame()
-            self.resetGarden()
-            self.updateUI()
-            self.hideSettingsMenu()
-        })
-        
-        // Present alert from view controller
-        if let viewController = self.view?.window?.rootViewController {
+        DispatchQueue.main.async { [weak self] in
+            guard let scene = self,
+                  let viewController = scene.view?.window?.rootViewController else { return }
+            
+            let alert = UIAlertController(
+                title: "Reset Game",
+                message: "Are you sure you want to reset your progress? This cannot be undone.",
+                preferredStyle: .alert
+            )
+            
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            alert.addAction(UIAlertAction(title: "Reset", style: .destructive) { _ in
+                scene.gameManager.resetGame()
+                scene.resetGarden()
+                scene.updateUI()
+                scene.hideSettingsMenu()
+            })
+            
             viewController.present(alert, animated: true)
         }
     }
@@ -513,8 +552,37 @@ extension GardenScene: SettingsMenuDelegate {
     }
 }
 
-// MARK: - Combine Support
+// MARK: - Tutorial Delegate
 
-import Combine
-
-private var cancellables = Set<AnyCancellable>() 
+extension GardenScene: TutorialManagerDelegate {
+    func showTutorialStep(_ step: TutorialStep) {
+        tutorialOverlay?.showTutorialStep(step)
+        
+        // Highlight relevant elements based on step
+        switch step {
+        case .plantFirstSeed:
+            highlightElement("garden_plot")
+        case .harvestPlant:
+            highlightElement("ready_plant")
+        case .buyUpgrade:
+            highlightElement("upgrade_button")
+        case .plantMultiple:
+            highlightElement("plant_button")
+        default:
+            removeHighlight()
+        }
+    }
+    
+    func hideTutorial() {
+        tutorialOverlay?.hide()
+        removeHighlight()
+    }
+    
+    func highlightElement(_ element: String) {
+        tutorialOverlay?.highlightElement(element)
+    }
+    
+    func removeHighlight() {
+        tutorialOverlay?.removeHighlight()
+    }
+}

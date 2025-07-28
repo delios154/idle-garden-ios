@@ -28,18 +28,18 @@ enum PlantRarity: String, CaseIterable, Codable {
     var growthTimeMultiplier: Double {
         switch self {
         case .basic: return 1.0
-        case .rare: return 3.0
-        case .legendary: return 8.0
-        case .prestige: return 15.0
+        case .rare: return 2.0
+        case .legendary: return 4.0
+        case .prestige: return 8.0
         }
     }
     
-    var gpPerHour: Int {
+    var gpMultiplier: Int {
         switch self {
-        case .basic: return 10
-        case .rare: return 50
-        case .legendary: return 200
-        case .prestige: return 1000
+        case .basic: return 1
+        case .rare: return 3
+        case .legendary: return 8
+        case .prestige: return 20
         }
     }
 }
@@ -58,7 +58,7 @@ struct PlantType: Codable {
     }
     
     var gpPerHour: Int {
-        return baseGpPerHour * rarity.gpPerHour / 10
+        return baseGpPerHour * rarity.gpMultiplier
     }
 }
 
@@ -74,15 +74,21 @@ struct PlantData: Codable {
     }
     
     var timeUntilReady: TimeInterval {
-        guard let type = plantType else { return 0 }
+        guard let type = plantType, !typeId.isEmpty, level > 0 else { return 0 }
         let elapsed = Date().timeIntervalSince(plantedTime)
-        return max(0, type.growthTime - elapsed)
+        let adjustedGrowthTime = type.growthTime / GameManager.shared.getGrowthSpeedMultiplier()
+        return max(0, adjustedGrowthTime - elapsed)
     }
     
     var progressPercentage: Double {
-        guard let type = plantType else { return 0 }
+        guard let type = plantType, !typeId.isEmpty, level > 0 else { return 0 }
         let elapsed = Date().timeIntervalSince(plantedTime)
-        return min(1.0, elapsed / type.growthTime)
+        let adjustedGrowthTime = type.growthTime / GameManager.shared.getGrowthSpeedMultiplier()
+        return min(1.0, max(0.0, elapsed / adjustedGrowthTime))
+    }
+    
+    var isEmpty: Bool {
+        return typeId.isEmpty || level == 0
     }
 }
 
@@ -97,16 +103,20 @@ struct GameState: Codable {
     var totalPlayTime: TimeInterval
     var prestigeCount: Int
     var wisdomPoints: Int
+    var totalGpEarned: Int // Track lifetime GP earned
+    var totalPlantsGrown: Int // Track total plants grown
     
     init() {
-        self.gardenPoints = 0
-        self.seeds = 0
+        self.gardenPoints = 10 // Start with some GP for first plant
+        self.seeds = 5 // Start with some seeds
         self.plants = []
         self.upgrades = [:]
         self.lastSaveTime = Date()
         self.totalPlayTime = 0
         self.prestigeCount = 0
         self.wisdomPoints = 0
+        self.totalGpEarned = 0
+        self.totalPlantsGrown = 0
     }
 }
 
@@ -121,31 +131,41 @@ enum UpgradeType: String, CaseIterable, Codable {
     
     var baseCost: Int {
         switch self {
-        case .plantSpeed: return 100
-        case .gpMultiplier: return 200
+        case .plantSpeed: return 50
+        case .gpMultiplier: return 100
         case .gardenPlots: return 500
-        case .autoHarvest: return 1000
+        case .autoHarvest: return 2000
         case .offlineEfficiency: return 300
         }
     }
     
     var maxLevel: Int {
         switch self {
-        case .plantSpeed: return 20
-        case .gpMultiplier: return 15
-        case .gardenPlots: return 10
-        case .autoHarvest: return 5
-        case .offlineEfficiency: return 10
+        case .plantSpeed: return 50
+        case .gpMultiplier: return 25
+        case .gardenPlots: return 20
+        case .autoHarvest: return 10
+        case .offlineEfficiency: return 15
         }
     }
     
     var costMultiplier: Double {
         switch self {
-        case .plantSpeed: return 1.5
-        case .gpMultiplier: return 2.0
-        case .gardenPlots: return 3.0
-        case .autoHarvest: return 2.5
-        case .offlineEfficiency: return 1.8
+        case .plantSpeed: return 1.3
+        case .gpMultiplier: return 1.8
+        case .gardenPlots: return 2.5
+        case .autoHarvest: return 2.2
+        case .offlineEfficiency: return 1.6
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .plantSpeed: return "Makes plants grow faster"
+        case .gpMultiplier: return "Increases GP earned from harvests"
+        case .gardenPlots: return "Unlocks additional garden plots"
+        case .autoHarvest: return "Automatically harvests ready plants"
+        case .offlineEfficiency: return "Improves offline progress efficiency"
         }
     }
 }
@@ -156,38 +176,27 @@ class GameData {
     static let shared = GameData()
     
     let plantTypes: [PlantType] = [
-        // Basic Plants
-        PlantType(id: "carrot", name: "Carrot", rarity: .basic, baseGrowthTime: 30, baseGpPerHour: 10, unlockRequirement: 0, spriteName: "carrot"),
-        PlantType(id: "tomato", name: "Tomato", rarity: .basic, baseGrowthTime: 60, baseGpPerHour: 15, unlockRequirement: 50, spriteName: "tomato"),
-        PlantType(id: "flower", name: "Sunflower", rarity: .basic, baseGrowthTime: 120, baseGpPerHour: 20, unlockRequirement: 100, spriteName: "sunflower"),
-        PlantType(id: "lettuce", name: "Lettuce", rarity: .basic, baseGrowthTime: 25, baseGpPerHour: 8, unlockRequirement: 25, spriteName: "lettuce"),
-        PlantType(id: "potato", name: "Potato", rarity: .basic, baseGrowthTime: 90, baseGpPerHour: 25, unlockRequirement: 150, spriteName: "potato"),
-        PlantType(id: "corn", name: "Corn", rarity: .basic, baseGrowthTime: 150, baseGpPerHour: 30, unlockRequirement: 200, spriteName: "corn"),
+        // Basic Plants - Quick growth, low rewards
+        PlantType(id: "carrot", name: "Carrot", rarity: .basic, baseGrowthTime: 15, baseGpPerHour: 8, unlockRequirement: 0, spriteName: "carrot"),
+        PlantType(id: "tomato", name: "Tomato", rarity: .basic, baseGrowthTime: 30, baseGpPerHour: 12, unlockRequirement: 50, spriteName: "tomato"),
+        PlantType(id: "sunflower", name: "Sunflower", rarity: .basic, baseGrowthTime: 45, baseGpPerHour: 15, unlockRequirement: 150, spriteName: "sunflower"),
+        PlantType(id: "lettuce", name: "Lettuce", rarity: .basic, baseGrowthTime: 60, baseGpPerHour: 20, unlockRequirement: 300, spriteName: "lettuce"),
         
-        // Rare Plants
-        PlantType(id: "magic_flower", name: "Magic Flower", rarity: .rare, baseGrowthTime: 300, baseGpPerHour: 50, unlockRequirement: 500, spriteName: "magic_flower"),
-        PlantType(id: "golden_fruit", name: "Golden Fruit", rarity: .rare, baseGrowthTime: 600, baseGpPerHour: 75, unlockRequirement: 1000, spriteName: "golden_fruit"),
-        PlantType(id: "crystal_rose", name: "Crystal Rose", rarity: .rare, baseGrowthTime: 900, baseGpPerHour: 100, unlockRequirement: 2000, spriteName: "crystal_rose"),
-        PlantType(id: "silver_vine", name: "Silver Vine", rarity: .rare, baseGrowthTime: 450, baseGpPerHour: 60, unlockRequirement: 750, spriteName: "silver_vine"),
-        PlantType(id: "mystic_herb", name: "Mystic Herb", rarity: .rare, baseGrowthTime: 720, baseGpPerHour: 85, unlockRequirement: 1500, spriteName: "mystic_herb"),
-        PlantType(id: "rainbow_tulip", name: "Rainbow Tulip", rarity: .rare, baseGrowthTime: 540, baseGpPerHour: 70, unlockRequirement: 1200, spriteName: "rainbow_tulip"),
-        PlantType(id: "enchanted_berry", name: "Enchanted Berry", rarity: .rare, baseGrowthTime: 660, baseGpPerHour: 80, unlockRequirement: 1800, spriteName: "enchanted_berry"),
+        // Rare Plants - Medium growth, good rewards
+        PlantType(id: "magic_flower", name: "Magic Flower", rarity: .rare, baseGrowthTime: 120, baseGpPerHour: 30, unlockRequirement: 1000, spriteName: "magic_flower"),
+        PlantType(id: "golden_fruit", name: "Golden Fruit", rarity: .rare, baseGrowthTime: 180, baseGpPerHour: 45, unlockRequirement: 2500, spriteName: "golden_fruit"),
+        PlantType(id: "crystal_rose", name: "Crystal Rose", rarity: .rare, baseGrowthTime: 300, baseGpPerHour: 60, unlockRequirement: 5000, spriteName: "crystal_rose"),
+        PlantType(id: "rainbow_tulip", name: "Rainbow Tulip", rarity: .rare, baseGrowthTime: 420, baseGpPerHour: 80, unlockRequirement: 10000, spriteName: "rainbow_tulip"),
         
-        // Legendary Plants
-        PlantType(id: "dragon_fruit", name: "Dragon Fruit", rarity: .legendary, baseGrowthTime: 3600, baseGpPerHour: 200, unlockRequirement: 5000, spriteName: "dragon_fruit"),
-        PlantType(id: "phoenix_flower", name: "Phoenix Flower", rarity: .legendary, baseGrowthTime: 7200, baseGpPerHour: 300, unlockRequirement: 10000, spriteName: "phoenix_flower"),
-        PlantType(id: "star_plant", name: "Star Plant", rarity: .legendary, baseGrowthTime: 14400, baseGpPerHour: 500, unlockRequirement: 20000, spriteName: "star_plant"),
-        PlantType(id: "cosmic_lily", name: "Cosmic Lily", rarity: .legendary, baseGrowthTime: 5400, baseGpPerHour: 250, unlockRequirement: 7500, spriteName: "cosmic_lily"),
-        PlantType(id: "void_orchid", name: "Void Orchid", rarity: .legendary, baseGrowthTime: 9000, baseGpPerHour: 350, unlockRequirement: 15000, spriteName: "void_orchid"),
-        PlantType(id: "celestial_bonsai", name: "Celestial Bonsai", rarity: .legendary, baseGrowthTime: 10800, baseGpPerHour: 400, unlockRequirement: 18000, spriteName: "celestial_bonsai"),
-        PlantType(id: "time_blossom", name: "Time Blossom", rarity: .legendary, baseGrowthTime: 12600, baseGpPerHour: 450, unlockRequirement: 25000, spriteName: "time_blossom"),
+        // Legendary Plants - Long growth, high rewards
+        PlantType(id: "dragon_fruit", name: "Dragon Fruit", rarity: .legendary, baseGrowthTime: 900, baseGpPerHour: 120, unlockRequirement: 25000, spriteName: "dragon_fruit"),
+        PlantType(id: "phoenix_flower", name: "Phoenix Flower", rarity: .legendary, baseGrowthTime: 1800, baseGpPerHour: 200, unlockRequirement: 50000, spriteName: "phoenix_flower"),
+        PlantType(id: "star_plant", name: "Star Plant", rarity: .legendary, baseGrowthTime: 3600, baseGpPerHour: 300, unlockRequirement: 100000, spriteName: "star_plant"),
+        PlantType(id: "moon_blossom", name: "Moon Blossom", rarity: .legendary, baseGrowthTime: 5400, baseGpPerHour: 450, unlockRequirement: 200000, spriteName: "moon_blossom"),
         
-        // Prestige Plants
-        PlantType(id: "eternal_tree", name: "Eternal Tree", rarity: .prestige, baseGrowthTime: 86400, baseGpPerHour: 1000, unlockRequirement: 50000, spriteName: "eternal_tree"),
-        PlantType(id: "world_seed", name: "World Seed", rarity: .prestige, baseGrowthTime: 43200, baseGpPerHour: 800, unlockRequirement: 35000, spriteName: "world_seed"),
-        PlantType(id: "infinity_bloom", name: "Infinity Bloom", rarity: .prestige, baseGrowthTime: 64800, baseGpPerHour: 900, unlockRequirement: 40000, spriteName: "infinity_bloom"),
-        PlantType(id: "genesis_plant", name: "Genesis Plant", rarity: .prestige, baseGrowthTime: 108000, baseGpPerHour: 1200, unlockRequirement: 75000, spriteName: "genesis_plant"),
-        PlantType(id: "divine_sapling", name: "Divine Sapling", rarity: .prestige, baseGrowthTime: 129600, baseGpPerHour: 1500, unlockRequirement: 100000, spriteName: "divine_sapling")
+        // Prestige Plants - Very long growth, massive rewards
+        PlantType(id: "eternal_tree", name: "Eternal Tree", rarity: .prestige, baseGrowthTime: 14400, baseGpPerHour: 800, unlockRequirement: 500000, spriteName: "eternal_tree"),
+        PlantType(id: "cosmic_vine", name: "Cosmic Vine", rarity: .prestige, baseGrowthTime: 28800, baseGpPerHour: 1500, unlockRequirement: 1000000, spriteName: "cosmic_vine")
     ]
     
     private init() {}
@@ -199,6 +208,49 @@ class GameData {
     func getAvailablePlants(for gp: Int) -> [PlantType] {
         return plantTypes.filter { $0.unlockRequirement <= gp }
     }
+    
+    func getPlantsByRarity(_ rarity: PlantRarity) -> [PlantType] {
+        return plantTypes.filter { $0.rarity == rarity }
+    }
+    
+    func getNextPlantToUnlock(currentGp: Int) -> PlantType? {
+        let locked = plantTypes.filter { $0.unlockRequirement > currentGp }
+        return locked.min { $0.unlockRequirement < $1.unlockRequirement }
+    }
+}
+
+// MARK: - Statistics Manager
+
+class GameStatistics {
+    static let shared = GameStatistics()
+    private init() {}
+    
+    func getPlayTime() -> TimeInterval {
+        // This would be calculated based on session tracking
+        return GameManager.shared.gameState.totalPlayTime
+    }
+    
+    func getLifetimeGP() -> Int {
+        return GameManager.shared.gameState.totalGpEarned
+    }
+    
+    func getTotalPlantsGrown() -> Int {
+        return GameManager.shared.gameState.totalPlantsGrown
+    }
+    
+    func getAverageGpPerHour() -> Double {
+        let playTime = getPlayTime()
+        guard playTime > 0 else { return 0 }
+        return Double(getLifetimeGP()) / (playTime / 3600.0)
+    }
+    
+    func getCurrentPlantsCount() -> Int {
+        return GameManager.shared.gameState.plants.filter { !$0.isEmpty }.count
+    }
+    
+    func getReadyPlantsCount() -> Int {
+        return GameManager.shared.gameState.plants.filter { $0.isReady && !$0.isEmpty }.count
+    }
 }
 
 // MARK: - Save System
@@ -207,57 +259,202 @@ class SaveManager {
     static let shared = SaveManager()
     
     private let saveKey = "IdleGardenSave"
+    private let backupSaveKey = "IdleGardenBackup"
     
     private init() {}
     
     func saveGame(_ gameState: GameState) {
         do {
+            // Create backup of current save
+            if let currentData = UserDefaults.standard.data(forKey: saveKey) {
+                UserDefaults.standard.set(currentData, forKey: backupSaveKey)
+            }
+            
+            // Save new data
             let data = try JSONEncoder().encode(gameState)
             UserDefaults.standard.set(data, forKey: saveKey)
+            
+            print("Game saved successfully")
         } catch {
             print("Failed to save game: \(error)")
         }
     }
     
     func loadGame() -> GameState {
-        guard let data = UserDefaults.standard.data(forKey: saveKey) else {
-            return GameState()
+        // Try to load main save first
+        if let data = UserDefaults.standard.data(forKey: saveKey) {
+            do {
+                let gameState = try JSONDecoder().decode(GameState.self, from: data)
+                print("Game loaded successfully")
+                return gameState
+            } catch {
+                print("Failed to load main save: \(error)")
+                
+                // Try backup save
+                if let backupData = UserDefaults.standard.data(forKey: backupSaveKey) {
+                    do {
+                        let gameState = try JSONDecoder().decode(GameState.self, from: backupData)
+                        print("Loaded from backup save")
+                        return gameState
+                    } catch {
+                        print("Failed to load backup save: \(error)")
+                    }
+                }
+            }
         }
         
-        do {
-            let gameState = try JSONDecoder().decode(GameState.self, from: data)
-            return gameState
-        } catch {
-            print("Failed to load game: \(error)")
-            return GameState()
-        }
+        print("Creating new game state")
+        return GameState()
     }
     
     func calculateOfflineProgress(gameState: GameState) -> (gpEarned: Int, plantsReady: Int) {
         let now = Date()
         let timeDiff = now.timeIntervalSince(gameState.lastSaveTime)
-        let maxOfflineTime: TimeInterval = 24 * 3600 // 24 hours
+        let maxOfflineTime: TimeInterval = 24 * 3600 // 24 hours max
         
-        let _ = min(timeDiff, maxOfflineTime)
-        let offlineEfficiency = 0.8 // 80% efficiency when offline
+        // Don't calculate progress for very short periods or future dates
+        guard timeDiff > 30 && timeDiff < maxOfflineTime * 2 else {
+            return (0, 0)
+        }
+        
+        let effectiveOfflineTime = min(timeDiff, maxOfflineTime)
+        let offlineEfficiency = 0.8 // Default offline efficiency
         
         var totalGpEarned = 0
         var plantsReady = 0
         
         for plant in gameState.plants {
-            guard let plantType = plant.plantType else { continue }
+            guard !plant.isEmpty, let plantType = plant.plantType else { continue }
             
             let timeSincePlanting = now.timeIntervalSince(plant.plantedTime)
-            let growthTime = plantType.growthTime
+            let adjustedGrowthTime = plantType.growthTime // Use base growth time for offline calculation
             
-            if timeSincePlanting >= growthTime {
-                let cycles = Int(timeSincePlanting / growthTime)
-                let gpPerCycle = plantType.gpPerHour * Int(growthTime) / 3600
-                totalGpEarned += cycles * gpPerCycle * Int(offlineEfficiency)
-                plantsReady += 1
+            if timeSincePlanting >= adjustedGrowthTime {
+                // Calculate how many harvest cycles occurred
+                let cycles = Int(effectiveOfflineTime / adjustedGrowthTime)
+                if cycles > 0 {
+                    let gpPerCycle = calculateBaseGpEarned(for: plant, plantType: plantType)
+                    totalGpEarned += Int(Double(cycles * gpPerCycle) * offlineEfficiency)
+                    plantsReady += 1
+                }
             }
         }
         
         return (totalGpEarned, plantsReady)
     }
-} 
+    
+    private func calculateBaseGpEarned(for plant: PlantData, plantType: PlantType) -> Int {
+        let baseGp = plantType.gpPerHour * Int(plantType.growthTime) / 3600
+        let levelMultiplier = 1.0 + (Double(plant.level - 1) * 0.1) // 10% increase per level
+        return Int(Double(baseGp) * levelMultiplier)
+    }
+    
+    func exportSave() -> String? {
+        guard let data = UserDefaults.standard.data(forKey: saveKey) else { return nil }
+        return data.base64EncodedString()
+    }
+    
+    func importSave(from base64String: String) -> Bool {
+        guard let data = Data(base64Encoded: base64String) else { return false }
+        
+        do {
+            // Validate the data can be decoded
+            _ = try JSONDecoder().decode(GameState.self, from: data)
+            
+            // Save as main save
+            UserDefaults.standard.set(data, forKey: saveKey)
+            return true
+        } catch {
+            print("Failed to import save: \(error)")
+            return false
+        }
+    }
+    
+    func deleteSave() {
+        UserDefaults.standard.removeObject(forKey: saveKey)
+        UserDefaults.standard.removeObject(forKey: backupSaveKey)
+    }
+}
+
+// MARK: - Game Configuration
+
+struct GameConfig {
+    static let maxPlants = 100
+    static let maxOfflineHours = 24
+    static let autoSaveInterval: TimeInterval = 30
+    static let updateInterval: TimeInterval = 1.0
+    
+    // Balance constants
+    static let prestigeRequirement = 1_000_000
+    static let maxWisdomPoints = 100
+    static let seedsFromAchievements = true
+    
+    // UI Constants
+    static let animationDuration: TimeInterval = 0.3
+    static let feedbackDuration: TimeInterval = 0.1
+    
+    // Debug settings
+    static let showDebugInfo = false
+    static let fastGrowth = false // For testing
+    static let unlockAllPlants = false // For testing
+}
+
+// MARK: - Extensions
+
+extension Date {
+    func timeAgo() -> String {
+        let interval = Date().timeIntervalSince(self)
+        
+        if interval < 60 {
+            return "Just now"
+        } else if interval < 3600 {
+            let minutes = Int(interval / 60)
+            return "\(minutes) minute\(minutes == 1 ? "" : "s") ago"
+        } else if interval < 86400 {
+            let hours = Int(interval / 3600)
+            return "\(hours) hour\(hours == 1 ? "" : "s") ago"
+        } else {
+            let days = Int(interval / 86400)
+            return "\(days) day\(days == 1 ? "" : "s") ago"
+        }
+    }
+}
+
+extension PlantData {
+    mutating func reset() {
+        self.plantedTime = Date()
+        self.lastHarvestTime = Date()
+        self.isReady = false
+    }
+    
+    var canHarvest: Bool {
+        return isReady && !isEmpty
+    }
+    
+    var timeToReadyString: String {
+        if isReady {
+            return "Ready!"
+        } else {
+            return TimeFormatter.formatTime(timeUntilReady)
+        }
+    }
+}
+
+// MARK: - Time Formatter Utility
+
+struct TimeFormatter {
+    static func formatTime(_ timeInterval: TimeInterval) -> String {
+        let totalSeconds = Int(timeInterval)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        } else if minutes > 0 {
+            return String(format: "%d:%02d", minutes, seconds)
+        } else {
+            return "\(seconds)s"
+        }
+    }
+}

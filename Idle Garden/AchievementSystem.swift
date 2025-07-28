@@ -19,6 +19,8 @@ enum AchievementType: String, CaseIterable, Codable {
     case prestigeMaster = "Prestige Master"
     case collector = "Plant Collector"
     case timeTraveler = "Time Traveler"
+    case gardener = "Green Thumb"
+    case efficiency = "Efficiency Expert"
     
     var title: String {
         return rawValue
@@ -31,30 +33,36 @@ enum AchievementType: String, CaseIterable, Codable {
         case .firstUpgrade:
             return "Buy your first upgrade"
         case .plantMaster:
-            return "Plant 10 different types of plants"
+            return "Plant 5 different types of plants"
         case .speedDemon:
-            return "Reach 5x growth speed multiplier"
+            return "Reach 3x growth speed multiplier"
         case .millionaire:
             return "Earn 1,000,000 Garden Points"
         case .prestigeMaster:
-            return "Perform 5 garden rebirths"
+            return "Perform 3 garden rebirths"
         case .collector:
-            return "Unlock all plant types"
+            return "Unlock 10 different plant types"
         case .timeTraveler:
-            return "Accumulate 24 hours of offline progress"
+            return "Accumulate 12 hours of offline progress"
+        case .gardener:
+            return "Have 15 plants growing simultaneously"
+        case .efficiency:
+            return "Reach level 10 in any upgrade"
         }
     }
     
     var reward: Int {
         switch self {
-        case .firstHarvest: return 10
-        case .firstUpgrade: return 25
-        case .plantMaster: return 100
-        case .speedDemon: return 250
-        case .millionaire: return 1000
-        case .prestigeMaster: return 500
-        case .collector: return 750
-        case .timeTraveler: return 300
+        case .firstHarvest: return 5
+        case .firstUpgrade: return 10
+        case .plantMaster: return 25
+        case .speedDemon: return 50
+        case .millionaire: return 200
+        case .prestigeMaster: return 100
+        case .collector: return 150
+        case .timeTraveler: return 75
+        case .gardener: return 40
+        case .efficiency: return 60
         }
     }
     
@@ -68,6 +76,43 @@ enum AchievementType: String, CaseIterable, Codable {
         case .prestigeMaster: return "🔄"
         case .collector: return "📚"
         case .timeTraveler: return "⏰"
+        case .gardener: return "🌿"
+        case .efficiency: return "🎯"
+        }
+    }
+    
+    var rarity: AchievementRarity {
+        switch self {
+        case .firstHarvest, .firstUpgrade:
+            return .common
+        case .plantMaster, .gardener, .efficiency:
+            return .uncommon
+        case .speedDemon, .collector, .timeTraveler:
+            return .rare
+        case .millionaire, .prestigeMaster:
+            return .legendary
+        }
+    }
+}
+
+enum AchievementRarity {
+    case common, uncommon, rare, legendary
+    
+    var color: UIColor {
+        switch self {
+        case .common: return .systemGray
+        case .uncommon: return .systemGreen
+        case .rare: return .systemBlue
+        case .legendary: return .systemPurple
+        }
+    }
+    
+    var borderColor: UIColor {
+        switch self {
+        case .common: return .systemGray2
+        case .uncommon: return .systemGreen
+        case .rare: return .systemBlue
+        case .legendary: return .systemPurple
         }
     }
 }
@@ -78,11 +123,25 @@ struct Achievement: Codable {
     let type: AchievementType
     var isUnlocked: Bool
     var unlockedDate: Date?
+    var progress: Double // For progressive achievements
     
     init(type: AchievementType) {
         self.type = type
         self.isUnlocked = false
         self.unlockedDate = nil
+        self.progress = 0.0
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(AchievementType.self, forKey: .type)
+        isUnlocked = try container.decode(Bool.self, forKey: .isUnlocked)
+        unlockedDate = try container.decodeIfPresent(Date.self, forKey: .unlockedDate)
+        progress = try container.decodeIfPresent(Double.self, forKey: .progress) ?? 0.0
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case type, isUnlocked, unlockedDate, progress
     }
 }
 
@@ -95,6 +154,7 @@ class AchievementManager: ObservableObject {
     @Published var recentlyUnlocked: [Achievement] = []
     
     private let saveKey = "Achievements"
+    private var notificationQueue: [Achievement] = []
     
     private init() {
         self.achievements = AchievementType.allCases.map { Achievement(type: $0) }
@@ -112,11 +172,16 @@ class AchievementManager: ObservableObject {
         checkPrestigeMaster(gameState: gameState)
         checkCollector(gameState: gameState)
         checkTimeTraveler(gameState: gameState)
+        checkGardener(gameState: gameState)
+        checkEfficiency(gameState: gameState)
+        
+        // Process notification queue
+        processNotificationQueue()
     }
     
     private func checkFirstHarvest(gameState: GameState) {
         let achievement = getAchievement(.firstHarvest)
-        if !achievement.isUnlocked && gameState.gardenPoints > 0 {
+        if !achievement.isUnlocked && gameState.totalGpEarned > 0 {
             unlockAchievement(.firstHarvest)
         }
     }
@@ -124,15 +189,21 @@ class AchievementManager: ObservableObject {
     private func checkFirstUpgrade(gameState: GameState) {
         let achievement = getAchievement(.firstUpgrade)
         if !achievement.isUnlocked && !gameState.upgrades.isEmpty {
-            unlockAchievement(.firstUpgrade)
+            let hasAnyUpgrade = gameState.upgrades.values.contains { $0 > 0 }
+            if hasAnyUpgrade {
+                unlockAchievement(.firstUpgrade)
+            }
         }
     }
     
     private func checkPlantMaster(gameState: GameState) {
         let achievement = getAchievement(.plantMaster)
         if !achievement.isUnlocked {
-            let uniquePlants = Set(gameState.plants.map { $0.typeId })
-            if uniquePlants.count >= 10 {
+            let uniquePlants = Set(gameState.plants.compactMap { $0.isEmpty ? nil : $0.typeId })
+            let progress = Double(uniquePlants.count) / 5.0
+            updateAchievementProgress(.plantMaster, progress: progress)
+            
+            if uniquePlants.count >= 5 {
                 unlockAchievement(.plantMaster)
             }
         }
@@ -141,8 +212,11 @@ class AchievementManager: ObservableObject {
     private func checkSpeedDemon(gameState: GameState) {
         let achievement = getAchievement(.speedDemon)
         if !achievement.isUnlocked {
-            let speedLevel = gameState.upgrades[UpgradeType.plantSpeed.rawValue] ?? 0
-            if speedLevel >= 10 { // 10 levels = 2x speed, 20 levels = 3x speed, etc.
+            let multiplier = GameManager.shared.getGrowthSpeedMultiplier()
+            let progress = (multiplier - 1.0) / 2.0 // Progress to 3x multiplier
+            updateAchievementProgress(.speedDemon, progress: progress)
+            
+            if multiplier >= 3.0 {
                 unlockAchievement(.speedDemon)
             }
         }
@@ -150,15 +224,25 @@ class AchievementManager: ObservableObject {
     
     private func checkMillionaire(gameState: GameState) {
         let achievement = getAchievement(.millionaire)
-        if !achievement.isUnlocked && gameState.gardenPoints >= 1_000_000 {
-            unlockAchievement(.millionaire)
+        if !achievement.isUnlocked {
+            let progress = Double(gameState.totalGpEarned) / 1_000_000.0
+            updateAchievementProgress(.millionaire, progress: progress)
+            
+            if gameState.totalGpEarned >= 1_000_000 {
+                unlockAchievement(.millionaire)
+            }
         }
     }
     
     private func checkPrestigeMaster(gameState: GameState) {
         let achievement = getAchievement(.prestigeMaster)
-        if !achievement.isUnlocked && gameState.prestigeCount >= 5 {
-            unlockAchievement(.prestigeMaster)
+        if !achievement.isUnlocked {
+            let progress = Double(gameState.prestigeCount) / 3.0
+            updateAchievementProgress(.prestigeMaster, progress: progress)
+            
+            if gameState.prestigeCount >= 3 {
+                unlockAchievement(.prestigeMaster)
+            }
         }
     }
     
@@ -168,7 +252,10 @@ class AchievementManager: ObservableObject {
             let unlockedPlants = GameData.shared.plantTypes.filter { plantType in
                 gameState.gardenPoints >= plantType.unlockRequirement
             }
-            if unlockedPlants.count >= GameData.shared.plantTypes.count {
+            let progress = Double(unlockedPlants.count) / 10.0
+            updateAchievementProgress(.collector, progress: progress)
+            
+            if unlockedPlants.count >= 10 {
                 unlockAchievement(.collector)
             }
         }
@@ -178,10 +265,39 @@ class AchievementManager: ObservableObject {
         let achievement = getAchievement(.timeTraveler)
         if !achievement.isUnlocked {
             // This would need to be tracked separately in game state
-            // For now, we'll use a placeholder
             let offlineTime = Date().timeIntervalSince(gameState.lastSaveTime)
-            if offlineTime >= 24 * 3600 { // 24 hours
+            let hoursOffline = offlineTime / 3600.0
+            let progress = hoursOffline / 12.0
+            updateAchievementProgress(.timeTraveler, progress: progress)
+            
+            if hoursOffline >= 12.0 {
                 unlockAchievement(.timeTraveler)
+            }
+        }
+    }
+    
+    private func checkGardener(gameState: GameState) {
+        let achievement = getAchievement(.gardener)
+        if !achievement.isUnlocked {
+            let activePlants = gameState.plants.filter { !$0.isEmpty }.count
+            let progress = Double(activePlants) / 15.0
+            updateAchievementProgress(.gardener, progress: progress)
+            
+            if activePlants >= 15 {
+                unlockAchievement(.gardener)
+            }
+        }
+    }
+    
+    private func checkEfficiency(gameState: GameState) {
+        let achievement = getAchievement(.efficiency)
+        if !achievement.isUnlocked {
+            let maxLevel = gameState.upgrades.values.max() ?? 0
+            let progress = Double(maxLevel) / 10.0
+            updateAchievementProgress(.efficiency, progress: progress)
+            
+            if maxLevel >= 10 {
+                unlockAchievement(.efficiency)
             }
         }
     }
@@ -190,9 +306,11 @@ class AchievementManager: ObservableObject {
     
     private func unlockAchievement(_ type: AchievementType) {
         guard let index = achievements.firstIndex(where: { $0.type == type }) else { return }
+        guard !achievements[index].isUnlocked else { return }
         
         achievements[index].isUnlocked = true
         achievements[index].unlockedDate = Date()
+        achievements[index].progress = 1.0
         
         // Add to recently unlocked
         recentlyUnlocked.append(achievements[index])
@@ -201,11 +319,24 @@ class AchievementManager: ObservableObject {
         let reward = type.reward
         GameManager.shared.gameState.seeds += reward
         
+        // Add to notification queue
+        notificationQueue.append(achievements[index])
+        
         // Save achievements
         saveAchievements()
         
-        // Show notification
-        showAchievementNotification(achievements[index])
+        print("Achievement unlocked: \(type.title)")
+    }
+    
+    private func updateAchievementProgress(_ type: AchievementType, progress: Double) {
+        guard let index = achievements.firstIndex(where: { $0.type == type }) else { return }
+        guard !achievements[index].isUnlocked else { return }
+        
+        let clampedProgress = min(1.0, max(0.0, progress))
+        if clampedProgress > achievements[index].progress {
+            achievements[index].progress = clampedProgress
+            saveAchievements()
+        }
     }
     
     private func getAchievement(_ type: AchievementType) -> Achievement {
@@ -224,6 +355,38 @@ class AchievementManager: ObservableObject {
         return Double(getUnlockedCount()) / Double(getTotalCount())
     }
     
+    func getAchievementsByRarity(_ rarity: AchievementRarity) -> [Achievement] {
+        return achievements.filter { $0.type.rarity == rarity }
+    }
+    
+    // MARK: - Notification System
+    
+    private func processNotificationQueue() {
+        guard !notificationQueue.isEmpty else { return }
+        
+        // Process one notification at a time to avoid overlap
+        let achievement = notificationQueue.removeFirst()
+        showAchievementNotification(achievement)
+    }
+    
+    private func showAchievementNotification(_ achievement: Achievement) {
+        // Find the scene to show notification
+        guard let scene = findActiveScene() else { return }
+        
+        let notification = AchievementNotification()
+        notification.position = CGPoint(x: scene.size.width/2, y: scene.size.height - 100)
+        notification.zPosition = 2000
+        scene.addChild(notification)
+        
+        notification.showAchievement(achievement)
+    }
+    
+    private func findActiveScene() -> SKScene? {
+        // This is a helper to find the active scene
+        // In a real implementation, you might store a reference to the scene
+        return nil // Would be implemented properly in the actual app
+    }
+    
     // MARK: - Save/Load
     
     private func saveAchievements() {
@@ -239,30 +402,37 @@ class AchievementManager: ObservableObject {
         guard let data = UserDefaults.standard.data(forKey: saveKey) else { return }
         
         do {
-            achievements = try JSONDecoder().decode([Achievement].self, from: data)
+            let loadedAchievements = try JSONDecoder().decode([Achievement].self, from: data)
+            
+            // Merge with current achievements to handle new achievements added in updates
+            for loadedAchievement in loadedAchievements {
+                if let index = achievements.firstIndex(where: { $0.type == loadedAchievement.type }) {
+                    achievements[index] = loadedAchievement
+                }
+            }
         } catch {
             print("Failed to load achievements: \(error)")
             achievements = AchievementType.allCases.map { Achievement(type: $0) }
         }
     }
     
-    // MARK: - UI
-    
-    private func showAchievementNotification(_ achievement: Achievement) {
-        // This would be implemented in the UI layer
-        print("Achievement Unlocked: \(achievement.type.title)")
-    }
-    
     func clearRecentlyUnlocked() {
         recentlyUnlocked.removeAll()
     }
+    
+    func resetAchievements() {
+        achievements = AchievementType.allCases.map { Achievement(type: $0) }
+        recentlyUnlocked.removeAll()
+        notificationQueue.removeAll()
+        saveAchievements()
+    }
 }
 
-// MARK: - Achievement UI
+// MARK: - Achievement UI Components
 
 class AchievementNotification: SKNode {
     
-    private var background: SKSpriteNode?
+    private var background: SKShapeNode?
     private var iconLabel: SKLabelNode?
     private var titleLabel: SKLabelNode?
     private var rewardLabel: SKLabelNode?
@@ -270,44 +440,69 @@ class AchievementNotification: SKNode {
     func showAchievement(_ achievement: Achievement) {
         removeAllChildren()
         
-        // Background
-        background = SKSpriteNode(color: .purple, size: CGSize(width: 280, height: 80))
+        let cardSize = CGSize(width: 300, height: 80)
+        
+        // Background with rarity color
+        background = SKShapeNode(rectOf: cardSize, cornerRadius: 15)
+        background?.fillColor = achievement.type.rarity.color.withAlphaComponent(0.9)
+        background?.strokeColor = achievement.type.rarity.borderColor
+        background?.lineWidth = 2
         background?.position = CGPoint.zero
-        background?.zPosition = 1000
+        background?.zPosition = 1
         addChild(background!)
+        
+        // Achievement unlocked label
+        let unlockedLabel = SKLabelNode(text: "🎉 Achievement Unlocked!")
+        unlockedLabel.fontName = "AvenirNext-Bold"
+        unlockedLabel.fontSize = 12
+        unlockedLabel.fontColor = .white
+        unlockedLabel.position = CGPoint(x: 0, y: 20)
+        unlockedLabel.zPosition = 2
+        addChild(unlockedLabel)
         
         // Icon
         iconLabel = SKLabelNode(text: achievement.type.icon)
-        iconLabel?.fontSize = 30
-        iconLabel?.position = CGPoint(x: -100, y: 0)
-        iconLabel?.zPosition = 1001
+        iconLabel?.fontSize = 24
+        iconLabel?.position = CGPoint(x: -100, y: -5)
+        iconLabel?.verticalAlignmentMode = .center
+        iconLabel?.horizontalAlignmentMode = .center
+        iconLabel?.zPosition = 2
         addChild(iconLabel!)
         
         // Title
         titleLabel = SKLabelNode(text: achievement.type.title)
         titleLabel?.fontName = "AvenirNext-Bold"
-        titleLabel?.fontSize = 16
+        titleLabel?.fontSize = 14
         titleLabel?.fontColor = .white
-        titleLabel?.position = CGPoint(x: 0, y: 10)
-        titleLabel?.zPosition = 1001
+        titleLabel?.position = CGPoint(x: -20, y: 0)
+        titleLabel?.zPosition = 2
         addChild(titleLabel!)
         
         // Reward
-        rewardLabel = SKLabelNode(text: "+\(achievement.type.reward) Seeds")
+        rewardLabel = SKLabelNode(text: "+\(achievement.type.reward) 🌰")
         rewardLabel?.fontName = "AvenirNext-Regular"
         rewardLabel?.fontSize = 12
-        rewardLabel?.fontColor = .yellow
-        rewardLabel?.position = CGPoint(x: 0, y: -10)
-        rewardLabel?.zPosition = 1001
+        rewardLabel?.fontColor = .systemYellow
+        rewardLabel?.position = CGPoint(x: -20, y: -18)
+        rewardLabel?.zPosition = 2
         addChild(rewardLabel!)
         
-        // Animation
+        // Animation sequence
         alpha = 0
+        position.x -= 50
+        
+        let slideIn = SKAction.moveBy(x: 50, y: 0, duration: 0.5)
         let fadeIn = SKAction.fadeIn(withDuration: 0.5)
+        let entrance = SKAction.group([slideIn, fadeIn])
+        
         let wait = SKAction.wait(forDuration: 3.0)
+        
+        let slideOut = SKAction.moveBy(x: 50, y: 0, duration: 0.5)
         let fadeOut = SKAction.fadeOut(withDuration: 0.5)
+        let exit = SKAction.group([slideOut, fadeOut])
+        
         let remove = SKAction.removeFromParent()
-        let sequence = SKAction.sequence([fadeIn, wait, fadeOut, remove])
+        let sequence = SKAction.sequence([entrance, wait, exit, remove])
         
         run(sequence)
     }
@@ -315,18 +510,15 @@ class AchievementNotification: SKNode {
 
 // MARK: - Achievement Menu
 
-protocol AchievementMenuDelegate: AnyObject {
-    func achievementMenuClosed()
-}
-
 class AchievementMenuNode: SKSpriteNode {
     
-    weak var delegate: AchievementMenuDelegate?
     private var closeButton: SKSpriteNode?
     private var scrollView: SKNode?
+    private var filterButtons: [SKSpriteNode] = []
+    private var currentFilter: AchievementRarity? = nil
     
     init(size: CGSize) {
-        super.init(texture: nil, color: .white, size: size)
+        super.init(texture: nil, color: .clear, size: size)
         setupAchievementMenu()
     }
     
@@ -336,12 +528,20 @@ class AchievementMenuNode: SKSpriteNode {
     }
     
     private func setupAchievementMenu() {
+        // Background
+        let background = SKShapeNode(rectOf: size, cornerRadius: 20)
+        background.fillColor = .white
+        background.strokeColor = UIColor.systemGray.withAlphaComponent(0.3)
+        background.lineWidth = 2
+        background.position = CGPoint.zero
+        addChild(background)
+        
         // Title
-        let titleLabel = SKLabelNode(text: "Achievements")
+        let titleLabel = SKLabelNode(text: "🏆 Achievements")
         titleLabel.fontName = "AvenirNext-Bold"
         titleLabel.fontSize = 24
         titleLabel.fontColor = .black
-        titleLabel.position = CGPoint(x: 0, y: size.height/2 - 30)
+        titleLabel.position = CGPoint(x: 0, y: size.height/2 - 40)
         addChild(titleLabel)
         
         // Progress
@@ -349,21 +549,34 @@ class AchievementMenuNode: SKSpriteNode {
         let progressLabel = SKLabelNode(text: "\(AchievementManager.shared.getUnlockedCount())/\(AchievementManager.shared.getTotalCount()) (\(Int(progress * 100))%)")
         progressLabel.fontName = "AvenirNext-Regular"
         progressLabel.fontSize = 16
-        progressLabel.fontColor = .black
-        progressLabel.position = CGPoint(x: 0, y: size.height/2 - 60)
+        progressLabel.fontColor = .systemGray
+        progressLabel.position = CGPoint(x: 0, y: size.height/2 - 70)
         addChild(progressLabel)
         
         // Close button
-        closeButton = SKSpriteNode(color: .red, size: CGSize(width: 40, height: 40))
+        closeButton = SKSpriteNode(color: .systemRed, size: CGSize(width: 44, height: 44))
         closeButton?.position = CGPoint(x: size.width/2 - 30, y: size.height/2 - 30)
         closeButton?.name = "closeButton"
         addChild(closeButton!)
+        
+        // Add rounded corners to close button
+        let closeShape = SKShapeNode(rectOf: closeButton!.size, cornerRadius: 8)
+        closeShape.fillColor = .systemRed
+        closeShape.strokeColor = .clear
+        closeShape.position = CGPoint.zero
+        closeButton?.addChild(closeShape)
         
         let closeIcon = SKLabelNode(text: "✕")
         closeIcon.fontSize = 20
         closeIcon.fontColor = .white
         closeIcon.position = CGPoint.zero
+        closeIcon.verticalAlignmentMode = .center
+        closeIcon.horizontalAlignmentMode = .center
+        closeIcon.zPosition = 1
         closeButton?.addChild(closeIcon)
+        
+        // Filter buttons
+        setupFilterButtons()
         
         // Achievement list
         setupAchievementList()
@@ -372,28 +585,88 @@ class AchievementMenuNode: SKSpriteNode {
         isUserInteractionEnabled = true
     }
     
+    private func setupFilterButtons() {
+        let rarities: [AchievementRarity?] = [nil, .common, .uncommon, .rare, .legendary]
+        let buttonWidth: CGFloat = 60
+        let spacing: CGFloat = 10
+        let totalWidth = CGFloat(rarities.count) * buttonWidth + CGFloat(rarities.count - 1) * spacing
+        let startX = -totalWidth / 2
+        
+        for (index, rarity) in rarities.enumerated() {
+            let button = SKSpriteNode(color: rarity?.color ?? .systemGray, size: CGSize(width: buttonWidth, height: 30))
+            button.position = CGPoint(x: startX + CGFloat(index) * (buttonWidth + spacing), y: size.height/2 - 110)
+            button.name = "filter_\(rarity?.hashValue ?? -1)"
+            addChild(button)
+            
+            // Add rounded corners
+            let shape = SKShapeNode(rectOf: button.size, cornerRadius: 6)
+            shape.fillColor = rarity?.color ?? .systemGray
+            shape.strokeColor = .clear
+            shape.position = CGPoint.zero
+            button.addChild(shape)
+            
+            let label = SKLabelNode(text: rarity == nil ? "All" : String(describing: rarity!).capitalized)
+            label.fontName = "AvenirNext-Regular"
+            label.fontSize = 10
+            label.fontColor = .white
+            label.position = CGPoint.zero
+            label.verticalAlignmentMode = .center
+            label.horizontalAlignmentMode = .center
+            label.zPosition = 1
+            button.addChild(label)
+            
+            filterButtons.append(button)
+        }
+    }
+    
     private func setupAchievementList() {
         scrollView = SKNode()
-        scrollView?.position = CGPoint(x: 0, y: size.height/2 - 100)
+        scrollView?.position = CGPoint(x: 0, y: size.height/2 - 150)
         addChild(scrollView!)
         
-        let buttonHeight: CGFloat = 60
+        let achievements = getFilteredAchievements()
+        let buttonHeight: CGFloat = 70
         let spacing: CGFloat = 10
         
-        for (index, achievement) in AchievementManager.shared.achievements.enumerated() {
+        for (index, achievement) in achievements.enumerated() {
             let button = createAchievementButton(achievement)
             button.position = CGPoint(x: 0, y: -CGFloat(index) * (buttonHeight + spacing))
             scrollView?.addChild(button)
         }
     }
     
+    private func getFilteredAchievements() -> [Achievement] {
+        let allAchievements = AchievementManager.shared.achievements
+        
+        if let filter = currentFilter {
+            return allAchievements.filter { $0.type.rarity == filter }
+        } else {
+            return allAchievements
+        }
+    }
+    
     private func createAchievementButton(_ achievement: Achievement) -> SKSpriteNode {
-        let button = SKSpriteNode(color: achievement.isUnlocked ? .green : .gray, size: CGSize(width: size.width - 40, height: 60))
+        let buttonColor = achievement.isUnlocked ? achievement.type.rarity.color : UIColor.systemGray
+        let button = SKSpriteNode(color: buttonColor.withAlphaComponent(0.8), size: CGSize(width: size.width - 60, height: 70))
+        
+        // Background shape
+        let shape = SKShapeNode(rectOf: button.size, cornerRadius: 12)
+        shape.fillColor = buttonColor.withAlphaComponent(0.8)
+        shape.strokeColor = achievement.type.rarity.borderColor.withAlphaComponent(0.6)
+        shape.lineWidth = achievement.isUnlocked ? 2 : 1
+        shape.position = CGPoint.zero
+        button.addChild(shape)
         
         // Icon
         let icon = SKLabelNode(text: achievement.type.icon)
-        icon.fontSize = 24
+        icon.fontSize = 32
         icon.position = CGPoint(x: -button.size.width/2 + 40, y: 0)
+        icon.verticalAlignmentMode = .center
+        icon.horizontalAlignmentMode = .center
+        icon.zPosition = 1
+        if !achievement.isUnlocked {
+            icon.alpha = 0.5
+        }
         button.addChild(icon)
         
         // Title
@@ -401,7 +674,9 @@ class AchievementMenuNode: SKSpriteNode {
         title.fontName = "AvenirNext-Bold"
         title.fontSize = 16
         title.fontColor = .white
-        title.position = CGPoint(x: -button.size.width/2 + 80, y: 10)
+        title.horizontalAlignmentMode = .left
+        title.position = CGPoint(x: -button.size.width/2 + 70, y: 15)
+        title.zPosition = 1
         button.addChild(title)
         
         // Description
@@ -409,23 +684,65 @@ class AchievementMenuNode: SKSpriteNode {
         description.fontName = "AvenirNext-Regular"
         description.fontSize = 12
         description.fontColor = .white
-        description.position = CGPoint(x: -button.size.width/2 + 80, y: -10)
+        description.horizontalAlignmentMode = .left
+        description.position = CGPoint(x: -button.size.width/2 + 70, y: -5)
+        description.zPosition = 1
         button.addChild(description)
         
-        // Reward
-        let reward = SKLabelNode(text: "+\(achievement.type.reward) Seeds")
-        reward.fontName = "AvenirNext-Regular"
-        reward.fontSize = 12
-        reward.fontColor = .yellow
-        reward.position = CGPoint(x: button.size.width/2 - 60, y: 0)
-        button.addChild(reward)
-        
-        // Lock icon if not unlocked
+        // Progress or completion
+        if achievement.isUnlocked {
+            let completedLabel = SKLabelNode(text: "✓ Completed")
+            completedLabel.fontName = "AvenirNext-Bold"
+            completedLabel.fontSize = 12
+            completedLabel.fontColor = .systemGreen
+            completedLabel.horizontalAlignmentMode = .left
+            completedLabel.position = CGPoint(x: -button.size.width/2 + 70, y: -20)
+            completedLabel.zPosition = 1
+            button.addChild(completedLabel)
+            
+            // Reward
+            let reward = SKLabelNode(text: "+\(achievement.type.reward) 🌰")
+            reward.fontName = "AvenirNext-Regular"
+            reward.fontSize = 12
+            reward.fontColor = .systemYellow
+            reward.position = CGPoint(x: button.size.width/2 - 60, y: 0)
+            reward.zPosition = 1
+            button.addChild(reward)
+        } else {
+            // Progress bar for progressive achievements
+            if achievement.progress > 0 {
+                let progressBG = SKSpriteNode(color: UIColor.systemGray.withAlphaComponent(0.3), 
+                                            size: CGSize(width: 100, height: 4))
+                progressBG.position = CGPoint(x: -button.size.width/2 + 120, y: -20)
+                progressBG.zPosition = 1
+                button.addChild(progressBG)
+                
+                let progressFill = SKSpriteNode(color: .systemBlue, 
+                                              size: CGSize(width: 100 * CGFloat(achievement.progress), height: 4))
+                progressFill.anchorPoint = CGPoint(x: 0, y: 0.5)
+                progressFill.position = CGPoint(x: -50, y: 0)
+                progressFill.zPosition = 2
+                progressBG.addChild(progressFill)
+                
+                let progressText = SKLabelNode(text: "\(Int(achievement.progress * 100))%")
+                progressText.fontName = "AvenirNext-Regular"
+                progressText.fontSize = 10
+                progressText.fontColor = .white
+                progressText.position = CGPoint(x: button.size.width/2 - 60, y: -20)
+                progressText.zPosition = 1
+                button.addChild(progressText)
+            }
+            
+        // Lock icon
         if !achievement.isUnlocked {
             let lock = SKLabelNode(text: "🔒")
             lock.fontSize = 20
-            lock.position = CGPoint(x: button.size.width/2 - 20, y: 0)
+            lock.position = CGPoint(x: button.size.width/2 - 30, y: 10)
+            lock.verticalAlignmentMode = .center
+            lock.horizontalAlignmentMode = .center
+            lock.zPosition = 1
             button.addChild(lock)
+        }
         }
         
         return button
@@ -435,8 +752,29 @@ class AchievementMenuNode: SKSpriteNode {
         guard let touch = touches.first else { return }
         let location = touch.location(in: self)
         
-        if closeButton?.contains(location) == true {
-            delegate?.achievementMenuClosed()
+        // Check for close button first
+        if let closeButton = closeButton, closeButton.contains(location) {
+            closeButton.run(SKAction.sequence([
+                SKAction.scale(to: 0.9, duration: 0.1),
+                SKAction.scale(to: 1.0, duration: 0.1)
+            ])) {
+                self.removeFromParent()
+            }
+            return
+        }
+        
+        // Check for filter buttons
+        let nodes = nodes(at: location)
+        for node in nodes {
+            if let name = node.name, name.hasPrefix("filter_") {
+                // Handle filter selection
+                node.run(SKAction.sequence([
+                    SKAction.scale(to: 0.9, duration: 0.1),
+                    SKAction.scale(to: 1.0, duration: 0.1)
+                ]))
+                // TODO: Implement filter functionality
+                return
+            }
         }
     }
-} 
+}
