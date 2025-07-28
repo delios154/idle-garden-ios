@@ -57,13 +57,26 @@ class GameManager: ObservableObject {
             isReady: false
         )
         
-        gameState.plants.append(newPlant)
+        // Ensure plants array is large enough to accommodate the plot index
+        while gameState.plants.count <= plotIndex {
+            gameState.plants.append(PlantData(typeId: "", plantedTime: Date(), lastHarvestTime: nil, level: 0, isReady: false))
+        }
+        
+        gameState.plants[plotIndex] = newPlant
         return true
     }
     
     func canPlantAtPlot(_ plotIndex: Int) -> Bool {
         let maxPlots = getMaxGardenPlots()
-        return plotIndex < maxPlots && plotIndex >= 0
+        guard plotIndex < maxPlots && plotIndex >= 0 else { return false }
+        
+        // Check if plot is empty (either no plant at index or invalid plant)
+        if plotIndex >= gameState.plants.count {
+            return true
+        }
+        
+        let plant = gameState.plants[plotIndex]
+        return plant.typeId.isEmpty || plant.level == 0
     }
     
     func getMaxGardenPlots() -> Int {
@@ -75,7 +88,9 @@ class GameManager: ObservableObject {
     func updatePlants() {
         for i in 0..<gameState.plants.count {
             let plant = gameState.plants[i]
-            guard let plantType = plant.plantType else { continue }
+            guard !plant.typeId.isEmpty, 
+                  plant.level > 0,
+                  let plantType = plant.plantType else { continue }
             
             let timeSincePlanting = Date().timeIntervalSince(plant.plantedTime)
             let growthTime = plantType.growthTime
@@ -90,7 +105,10 @@ class GameManager: ObservableObject {
         guard index < gameState.plants.count else { return 0 }
         
         let plant = gameState.plants[index]
-        guard plant.isReady, let plantType = plant.plantType else { return 0 }
+        guard plant.isReady, 
+              !plant.typeId.isEmpty, 
+              plant.level > 0,
+              let plantType = plant.plantType else { return 0 }
         
         let gpEarned = calculateGpEarned(for: plant, plantType: plantType)
         
@@ -105,11 +123,12 @@ class GameManager: ObservableObject {
     }
     
     func calculateGpEarned(for plant: PlantData, plantType: PlantType) -> Int {
-        let baseGp = plantType.gpPerHour * Int(plantType.growthTime) / 3600
+        let baseGp = Double(plantType.gpPerHour) * plantType.growthTime / 3600.0
         let levelMultiplier = 1.0 + (Double(plant.level - 1) * 0.1) // 10% increase per level
         let upgradeMultiplier = getGpMultiplier()
         
-        return Int(Double(baseGp) * levelMultiplier * upgradeMultiplier)
+        let finalGp = baseGp * levelMultiplier * upgradeMultiplier
+        return max(1, Int(finalGp)) // Ensure at least 1 GP is earned
     }
     
     // MARK: - Upgrade System

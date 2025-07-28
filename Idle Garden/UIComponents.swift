@@ -25,7 +25,7 @@ class GardenPlot: SKSpriteNode {
     private var plantData: PlantData?
     
     var hasPlant: Bool {
-        return plantData != nil
+        return plantData != nil && !plantData!.typeId.isEmpty && plantData!.level > 0
     }
     
     var isReady: Bool {
@@ -67,7 +67,7 @@ class GardenPlot: SKSpriteNode {
         let barHeight: CGFloat = 4
         
         progressBar = SKSpriteNode(color: .green, size: CGSize(width: barWidth, height: barHeight))
-        progressBar?.position = CGPoint(x: 0, y: -size.height/2 + 8) // Back under the box
+        progressBar?.position = CGPoint(x: -size.width/2 + 4, y: -size.height/2 + 8) // Left aligned under the box
         progressBar?.anchorPoint = CGPoint(x: 0, y: 0.5)
         addChild(progressBar!)
     }

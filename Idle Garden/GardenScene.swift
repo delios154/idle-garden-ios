@@ -84,7 +84,9 @@ class GardenScene: SKScene {
                 // Load existing plant if any
                 if plotIndex < gameManager.gameState.plants.count {
                     let plantData = gameManager.gameState.plants[plotIndex]
-                    plot.setPlant(plantData)
+                    if !plantData.typeId.isEmpty && plantData.level > 0 {
+                        plot.setPlant(plantData)
+                    }
                 }
             }
         }
@@ -412,9 +414,10 @@ extension GardenScene: PlantShopDelegate {
         // Find first empty plot
         for row in gardenGrid {
             for plot in row {
-                if !plot.hasPlant {
+                if !plot.hasPlant && gameManager.canPlantAtPlot(plot.plotIndex) {
                     if gameManager.plantSeed(plantType, at: plot.plotIndex) {
-                        plot.setPlant(gameManager.gameState.plants[plot.plotIndex])
+                        let plantData = gameManager.gameState.plants[plot.plotIndex]
+                        plot.setPlant(plantData)
                         return
                     }
                 }
