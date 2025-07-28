@@ -14,42 +14,69 @@ class GameViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        // Load 'GameScene.sks' as a GKScene. This provides gameplay related content
-        // including entities and graphs.
-        if let scene = GKScene(fileNamed: "GameScene") {
+        // Create the garden scene
+        let scene = GardenScene(size: view.bounds.size)
+        
+        // Set the scale mode to scale to fit the window
+        scene.scaleMode = .aspectFill
+        
+        // Present the scene
+        if let view = self.view as! SKView? {
+            view.presentScene(scene)
             
-            // Get the SKScene from the loaded GKScene
-            if let sceneNode = scene.rootNode as! GameScene? {
-                
-                // Copy gameplay related content over to the scene
-                sceneNode.entities = scene.entities
-                sceneNode.graphs = scene.graphs
-                
-                // Set the scale mode to scale to fit the window
-                sceneNode.scaleMode = .aspectFill
-                
-                // Present the scene
-                if let view = self.view as! SKView? {
-                    view.presentScene(sceneNode)
-                    
-                    view.ignoresSiblingOrder = true
-                    
-                    view.showsFPS = true
-                    view.showsNodeCount = true
-                }
-            }
+            view.ignoresSiblingOrder = true
+            
+            // Debug info (remove for production)
+            view.showsFPS = true
+            view.showsNodeCount = true
+            view.showsPhysics = false
         }
+        
+        // Initialize game manager
+        _ = GameManager.shared
     }
 
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
-        if UIDevice.current.userInterfaceIdiom == .phone {
-            return .allButUpsideDown
-        } else {
-            return .all
-        }
+        // Force portrait mode for better idle game experience
+        return .portrait
     }
 
     override var prefersStatusBarHidden: Bool {
         return true
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        // Save game when app goes to background
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    @objc private func appWillResignActive() {
+        // Save game state when app goes to background
+        GameManager.shared.saveGame()
+    }
+}
+
+// MARK: - Scene Delegate Support
+extension GameViewController {
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        
+        // Update scene size if needed
+        if let skView = view as? SKView, let scene = skView.scene {
+            scene.size = view.bounds.size
+        }
     }
 }
