@@ -95,7 +95,7 @@ enum AchievementType: String, CaseIterable, Codable {
     }
 }
 
-enum AchievementRarity {
+enum AchievementRarity: CaseIterable {
     case common, uncommon, rare, legendary
     
     var color: UIColor {
@@ -620,18 +620,39 @@ class AchievementMenuNode: SKSpriteNode {
     }
     
     private func setupAchievementList() {
+        // Calculate available space for achievements
+        let topMargin: CGFloat = 150 // Space for title, progress, and filter buttons
+        let bottomMargin: CGFloat = 20
+        let availableHeight = size.height - topMargin - bottomMargin
+        
         scrollView = SKNode()
-        scrollView?.position = CGPoint(x: 0, y: size.height/2 - 150)
+        scrollView?.position = CGPoint(x: 0, y: size.height/2 - topMargin)
         addChild(scrollView!)
         
         let achievements = getFilteredAchievements()
         let buttonHeight: CGFloat = 70
         let spacing: CGFloat = 10
         
+        // Create a container to hold all achievements
+        let container = SKNode()
+        scrollView?.addChild(container)
+        
         for (index, achievement) in achievements.enumerated() {
             let button = createAchievementButton(achievement)
             button.position = CGPoint(x: 0, y: -CGFloat(index) * (buttonHeight + spacing))
-            scrollView?.addChild(button)
+            container.addChild(button)
+        }
+        
+        // Calculate total content height
+        let totalContentHeight = CGFloat(achievements.count) * (buttonHeight + spacing) - spacing
+        
+        // If content is taller than available space, enable scrolling
+        if totalContentHeight > availableHeight {
+            // Store scroll info for touch handling
+            scrollView?.name = "scrollView"
+            scrollView?.userData = NSMutableDictionary()
+            scrollView?.userData?.setValue(totalContentHeight, forKey: "contentHeight")
+            scrollView?.userData?.setValue(availableHeight, forKey: "visibleHeight")
         }
     }
     
@@ -748,9 +769,13 @@ class AchievementMenuNode: SKSpriteNode {
         return button
     }
     
+    private var lastTouchLocation: CGPoint?
+    private var isScrolling = false
+    
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first else { return }
         let location = touch.location(in: self)
+        lastTouchLocation = location
         
         // Check for close button first
         if let closeButton = closeButton, closeButton.contains(location) {
@@ -767,14 +792,80 @@ class AchievementMenuNode: SKSpriteNode {
         let nodes = nodes(at: location)
         for node in nodes {
             if let name = node.name, name.hasPrefix("filter_") {
-                // Handle filter selection
-                node.run(SKAction.sequence([
-                    SKAction.scale(to: 0.9, duration: 0.1),
-                    SKAction.scale(to: 1.0, duration: 0.1)
-                ]))
-                // TODO: Implement filter functionality
+                handleFilterSelection(node)
                 return
             }
         }
+        
+        // Check if touch is in scroll area
+        if let scrollView = scrollView, scrollView.contains(location) {
+            isScrolling = true
+        }
+    }
+    
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first, isScrolling, let scrollView = scrollView else { return }
+        
+        let location = touch.location(in: self)
+        guard let lastLocation = lastTouchLocation else { return }
+        
+        let deltaY = location.y - lastLocation.y
+        let currentY = scrollView.position.y
+        let newY = currentY + deltaY
+        
+        // Get scroll constraints
+        if let userData = scrollView.userData,
+           let contentHeight = userData["contentHeight"] as? CGFloat,
+           let visibleHeight = userData["visibleHeight"] as? CGFloat {
+            
+            let maxY = size.height/2 - 150 // Top limit
+            let minY = maxY - (contentHeight - visibleHeight) // Bottom limit
+            
+            scrollView.position.y = max(minY, min(maxY, newY))
+        }
+        
+        lastTouchLocation = location
+    }
+    
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        isScrolling = false
+        lastTouchLocation = nil
+    }
+    
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        isScrolling = false
+        lastTouchLocation = nil
+    }
+    
+    private func handleFilterSelection(_ node: SKNode) {
+        // Visual feedback
+        node.run(SKAction.sequence([
+            SKAction.scale(to: 0.9, duration: 0.1),
+            SKAction.scale(to: 1.0, duration: 0.1)
+        ]))
+        
+        // Parse filter from node name
+        if let name = node.name {
+            let components = name.components(separatedBy: "_")
+            if components.count > 1, let hashValue = Int(components[1]) {
+                // Convert hash value back to rarity
+                if hashValue == -1 {
+                    currentFilter = nil // All
+                } else {
+                    currentFilter = AchievementRarity.allCases.first { $0.hashValue == hashValue }
+                }
+                
+                // Refresh achievement list
+                refreshAchievementList()
+            }
+        }
+    }
+    
+    private func refreshAchievementList() {
+        // Remove old achievement list
+        scrollView?.removeAllChildren()
+        
+        // Recreate achievement list with new filter
+        setupAchievementList()
     }
 }
