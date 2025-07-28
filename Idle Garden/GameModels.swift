@@ -160,19 +160,34 @@ class GameData {
         PlantType(id: "carrot", name: "Carrot", rarity: .basic, baseGrowthTime: 30, baseGpPerHour: 10, unlockRequirement: 0, spriteName: "carrot"),
         PlantType(id: "tomato", name: "Tomato", rarity: .basic, baseGrowthTime: 60, baseGpPerHour: 15, unlockRequirement: 50, spriteName: "tomato"),
         PlantType(id: "flower", name: "Sunflower", rarity: .basic, baseGrowthTime: 120, baseGpPerHour: 20, unlockRequirement: 100, spriteName: "sunflower"),
+        PlantType(id: "lettuce", name: "Lettuce", rarity: .basic, baseGrowthTime: 25, baseGpPerHour: 8, unlockRequirement: 25, spriteName: "lettuce"),
+        PlantType(id: "potato", name: "Potato", rarity: .basic, baseGrowthTime: 90, baseGpPerHour: 25, unlockRequirement: 150, spriteName: "potato"),
+        PlantType(id: "corn", name: "Corn", rarity: .basic, baseGrowthTime: 150, baseGpPerHour: 30, unlockRequirement: 200, spriteName: "corn"),
         
         // Rare Plants
         PlantType(id: "magic_flower", name: "Magic Flower", rarity: .rare, baseGrowthTime: 300, baseGpPerHour: 50, unlockRequirement: 500, spriteName: "magic_flower"),
         PlantType(id: "golden_fruit", name: "Golden Fruit", rarity: .rare, baseGrowthTime: 600, baseGpPerHour: 75, unlockRequirement: 1000, spriteName: "golden_fruit"),
         PlantType(id: "crystal_rose", name: "Crystal Rose", rarity: .rare, baseGrowthTime: 900, baseGpPerHour: 100, unlockRequirement: 2000, spriteName: "crystal_rose"),
+        PlantType(id: "silver_vine", name: "Silver Vine", rarity: .rare, baseGrowthTime: 450, baseGpPerHour: 60, unlockRequirement: 750, spriteName: "silver_vine"),
+        PlantType(id: "mystic_herb", name: "Mystic Herb", rarity: .rare, baseGrowthTime: 720, baseGpPerHour: 85, unlockRequirement: 1500, spriteName: "mystic_herb"),
+        PlantType(id: "rainbow_tulip", name: "Rainbow Tulip", rarity: .rare, baseGrowthTime: 540, baseGpPerHour: 70, unlockRequirement: 1200, spriteName: "rainbow_tulip"),
+        PlantType(id: "enchanted_berry", name: "Enchanted Berry", rarity: .rare, baseGrowthTime: 660, baseGpPerHour: 80, unlockRequirement: 1800, spriteName: "enchanted_berry"),
         
         // Legendary Plants
         PlantType(id: "dragon_fruit", name: "Dragon Fruit", rarity: .legendary, baseGrowthTime: 3600, baseGpPerHour: 200, unlockRequirement: 5000, spriteName: "dragon_fruit"),
         PlantType(id: "phoenix_flower", name: "Phoenix Flower", rarity: .legendary, baseGrowthTime: 7200, baseGpPerHour: 300, unlockRequirement: 10000, spriteName: "phoenix_flower"),
         PlantType(id: "star_plant", name: "Star Plant", rarity: .legendary, baseGrowthTime: 14400, baseGpPerHour: 500, unlockRequirement: 20000, spriteName: "star_plant"),
+        PlantType(id: "cosmic_lily", name: "Cosmic Lily", rarity: .legendary, baseGrowthTime: 5400, baseGpPerHour: 250, unlockRequirement: 7500, spriteName: "cosmic_lily"),
+        PlantType(id: "void_orchid", name: "Void Orchid", rarity: .legendary, baseGrowthTime: 9000, baseGpPerHour: 350, unlockRequirement: 15000, spriteName: "void_orchid"),
+        PlantType(id: "celestial_bonsai", name: "Celestial Bonsai", rarity: .legendary, baseGrowthTime: 10800, baseGpPerHour: 400, unlockRequirement: 18000, spriteName: "celestial_bonsai"),
+        PlantType(id: "time_blossom", name: "Time Blossom", rarity: .legendary, baseGrowthTime: 12600, baseGpPerHour: 450, unlockRequirement: 25000, spriteName: "time_blossom"),
         
         // Prestige Plants
-        PlantType(id: "eternal_tree", name: "Eternal Tree", rarity: .prestige, baseGrowthTime: 86400, baseGpPerHour: 1000, unlockRequirement: 50000, spriteName: "eternal_tree")
+        PlantType(id: "eternal_tree", name: "Eternal Tree", rarity: .prestige, baseGrowthTime: 86400, baseGpPerHour: 1000, unlockRequirement: 50000, spriteName: "eternal_tree"),
+        PlantType(id: "world_seed", name: "World Seed", rarity: .prestige, baseGrowthTime: 43200, baseGpPerHour: 800, unlockRequirement: 35000, spriteName: "world_seed"),
+        PlantType(id: "infinity_bloom", name: "Infinity Bloom", rarity: .prestige, baseGrowthTime: 64800, baseGpPerHour: 900, unlockRequirement: 40000, spriteName: "infinity_bloom"),
+        PlantType(id: "genesis_plant", name: "Genesis Plant", rarity: .prestige, baseGrowthTime: 108000, baseGpPerHour: 1200, unlockRequirement: 75000, spriteName: "genesis_plant"),
+        PlantType(id: "divine_sapling", name: "Divine Sapling", rarity: .prestige, baseGrowthTime: 129600, baseGpPerHour: 1500, unlockRequirement: 100000, spriteName: "divine_sapling")
     ]
     
     private init() {}

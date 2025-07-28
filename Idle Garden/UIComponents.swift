@@ -428,7 +428,7 @@ class PlantShopNode: SKSpriteNode {
         addChild(scrollView!)
         
         let availablePlants = GameData.shared.getAvailablePlants(for: GameManager.shared.gameState.gardenPoints)
-        let buttonHeight: CGFloat = 60
+        let buttonHeight: CGFloat = 80
         let spacing: CGFloat = 10
         
         for (index, plantType) in availablePlants.enumerated() {
@@ -440,12 +440,12 @@ class PlantShopNode: SKSpriteNode {
     }
     
     private func createPlantButton(_ plantType: PlantType) -> SKSpriteNode {
-        let button = SKSpriteNode(color: plantType.rarity.color, size: CGSize(width: size.width - 40, height: 60))
+        let button = SKSpriteNode(color: plantType.rarity.color, size: CGSize(width: size.width - 40, height: 80))
         
-        // Plant icon
-        let icon = SKLabelNode(text: "🌱")
+        // Plant icon (different icons for different rarities)
+        let icon = SKLabelNode(text: getPlantIcon(for: plantType.rarity))
         icon.fontSize = 24
-        icon.position = CGPoint(x: -button.size.width/2 + 40, y: 0)
+        icon.position = CGPoint(x: -button.size.width/2 + 40, y: 5)
         button.addChild(icon)
         
         // Plant name
@@ -453,26 +453,53 @@ class PlantShopNode: SKSpriteNode {
         nameLabel.fontName = "AvenirNext-Bold"
         nameLabel.fontSize = 16
         nameLabel.fontColor = .white
-        nameLabel.position = CGPoint(x: -button.size.width/2 + 80, y: 10)
+        nameLabel.position = CGPoint(x: -button.size.width/2 + 80, y: 20)
         button.addChild(nameLabel)
         
-        // Growth time
-        let timeLabel = SKLabelNode(text: GameManager.shared.formatTime(plantType.growthTime))
+        // Growth time and rarity
+        let timeLabel = SKLabelNode(text: "\(GameManager.shared.formatTime(plantType.growthTime)) • \(plantType.rarity.rawValue)")
         timeLabel.fontName = "AvenirNext-Regular"
-        timeLabel.fontSize = 12
+        timeLabel.fontSize = 11
         timeLabel.fontColor = .white
-        timeLabel.position = CGPoint(x: -button.size.width/2 + 80, y: -10)
+        timeLabel.position = CGPoint(x: -button.size.width/2 + 80, y: 5)
         button.addChild(timeLabel)
         
-        // GP per hour
+        // GP earned per harvest (more useful than GP/hour)
+        let baseGp = Double(plantType.gpPerHour) * plantType.growthTime / 3600.0
+        let gpPerHarvest = max(1, Int(baseGp))
+        let harvestLabel = SKLabelNode(text: "Harvest: +\(GameManager.shared.formatNumber(gpPerHarvest)) GP")
+        harvestLabel.fontName = "AvenirNext-Regular"
+        harvestLabel.fontSize = 11
+        harvestLabel.fontColor = .yellow
+        harvestLabel.position = CGPoint(x: -button.size.width/2 + 80, y: -10)
+        button.addChild(harvestLabel)
+        
+        // GP per hour (smaller, secondary info)
         let gpLabel = SKLabelNode(text: "\(plantType.gpPerHour) GP/h")
         gpLabel.fontName = "AvenirNext-Regular"
-        gpLabel.fontSize = 12
-        gpLabel.fontColor = .white
-        gpLabel.position = CGPoint(x: button.size.width/2 - 60, y: 0)
+        gpLabel.fontSize = 10
+        gpLabel.fontColor = .lightGray
+        gpLabel.position = CGPoint(x: button.size.width/2 - 60, y: 10)
         button.addChild(gpLabel)
         
+        // Unlock requirement
+        let unlockLabel = SKLabelNode(text: "Unlocks at \(GameManager.shared.formatNumber(plantType.unlockRequirement)) GP")
+        unlockLabel.fontName = "AvenirNext-Regular"
+        unlockLabel.fontSize = 9
+        unlockLabel.fontColor = .lightGray
+        unlockLabel.position = CGPoint(x: button.size.width/2 - 60, y: -5)
+        button.addChild(unlockLabel)
+        
         return button
+    }
+    
+    private func getPlantIcon(for rarity: PlantRarity) -> String {
+        switch rarity {
+        case .basic: return "🌱"
+        case .rare: return "🌸"
+        case .legendary: return "⭐"
+        case .prestige: return "💎"
+        }
     }
     
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -567,7 +594,7 @@ class UpgradeMenuNode: SKSpriteNode {
         nameLabel.fontName = "AvenirNext-Bold"
         nameLabel.fontSize = 16
         nameLabel.fontColor = .white
-        nameLabel.position = CGPoint(x: -button.size.width/2 + 20, y: 20)
+        nameLabel.position = CGPoint(x: -button.size.width/2 + 80, y: 20)
         button.addChild(nameLabel)
         
         // Current level
@@ -576,7 +603,7 @@ class UpgradeMenuNode: SKSpriteNode {
         levelLabel.fontName = "AvenirNext-Regular"
         levelLabel.fontSize = 12
         levelLabel.fontColor = .white
-        levelLabel.position = CGPoint(x: -button.size.width/2 + 20, y: 0)
+        levelLabel.position = CGPoint(x: -button.size.width/2 + 80, y: 0)
         button.addChild(levelLabel)
         
         // Cost
@@ -585,7 +612,7 @@ class UpgradeMenuNode: SKSpriteNode {
         costLabel.fontName = "AvenirNext-Regular"
         costLabel.fontSize = 12
         costLabel.fontColor = .white
-        costLabel.position = CGPoint(x: -button.size.width/2 + 20, y: -20)
+        costLabel.position = CGPoint(x: -button.size.width/2 + 80, y: -20)
         button.addChild(costLabel)
         
         // Buy button
@@ -674,6 +701,7 @@ class SettingsMenuNode: SKSpriteNode {
         closeLabel.fontSize = 20
         closeLabel.fontColor = .white
         closeLabel.position = CGPoint.zero
+        closeLabel.name = "closeButton"
         closeButton?.addChild(closeLabel)
         
         // Reset Game Button
@@ -720,20 +748,58 @@ class SettingsMenuNode: SKSpriteNode {
         isUserInteractionEnabled = true
     }
     
-    func handleTouch(_ location: CGPoint) {
-        let touchedNode = atPoint(location)
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else { return }
+        let location = touch.location(in: self)
         
-        switch touchedNode.name {
-        case "closeButton":
+        // Check if close button was tapped
+        if let closeButton = closeButton, closeButton.contains(location) {
             delegate?.settingsMenuClosed()
-        case "resetButton":
+            return
+        }
+        
+        // Check if reset button was tapped
+        if let resetButton = resetButton, resetButton.contains(location) {
             delegate?.resetGameTapped()
-        case "soundButton":
+            return
+        }
+        
+        // Check if sound button was tapped
+        if let soundButton = soundButton, soundButton.contains(location) {
             delegate?.toggleSoundTapped()
-        case "notificationsButton":
+            return
+        }
+        
+        // Check if notifications button was tapped
+        if let notificationsButton = notificationsButton, notificationsButton.contains(location) {
             delegate?.toggleNotificationsTapped()
-        default:
-            break
+            return
+        }
+    }
+    
+    func handleTouch(_ location: CGPoint) {
+        // Check if close button was tapped
+        if let closeButton = closeButton, closeButton.contains(location) {
+            delegate?.settingsMenuClosed()
+            return
+        }
+        
+        // Check if reset button was tapped
+        if let resetButton = resetButton, resetButton.contains(location) {
+            delegate?.resetGameTapped()
+            return
+        }
+        
+        // Check if sound button was tapped
+        if let soundButton = soundButton, soundButton.contains(location) {
+            delegate?.toggleSoundTapped()
+            return
+        }
+        
+        // Check if notifications button was tapped
+        if let notificationsButton = notificationsButton, notificationsButton.contains(location) {
+            delegate?.toggleNotificationsTapped()
+            return
         }
     }
     

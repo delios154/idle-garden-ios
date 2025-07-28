@@ -18,6 +18,7 @@ class GardenScene: SKScene {
     private var bottomToolbar: BottomToolbarNode?
     private var plantShop: PlantShopNode?
     private var upgradeMenu: UpgradeMenuNode?
+    private var achievementMenu: AchievementMenuNode?
     private var settingsMenu: SettingsMenuNode?
     
     // UI Elements
@@ -213,18 +214,27 @@ class GardenScene: SKScene {
     // MARK: - Achievement Menu
     
     private func showAchievementMenu() {
-        let achievementMenu = AchievementMenuNode(size: CGSize(width: size.width * 0.9, height: size.height * 0.8))
-        achievementMenu.position = CGPoint(x: size.width/2, y: size.height/2)
-        achievementMenu.zPosition = 100
-        addChild(achievementMenu)
+        guard achievementMenu == nil else { return }
+        
+        achievementMenu = AchievementMenuNode(size: CGSize(width: size.width * 0.9, height: size.height * 0.8))
+        achievementMenu?.position = CGPoint(x: size.width/2, y: size.height/2)
+        achievementMenu?.zPosition = 100
+        achievementMenu?.delegate = self
+        addChild(achievementMenu!)
         
         // Add dimming background
         let dimBackground = SKSpriteNode(color: .black, size: size)
         dimBackground.alpha = 0.5
         dimBackground.position = CGPoint(x: size.width/2, y: size.height/2)
         dimBackground.zPosition = 99
-        dimBackground.name = "dimBackground"
+        dimBackground.name = "achievementDimBackground"
         addChild(dimBackground)
+    }
+    
+    private func hideAchievementMenu() {
+        achievementMenu?.removeFromParent()
+        achievementMenu = nil
+        childNode(withName: "achievementDimBackground")?.removeFromParent()
     }
     
     // MARK: - Settings Menu
@@ -270,11 +280,7 @@ class GardenScene: SKScene {
             return
         }
         
-        // Check if touch is on settings menu
-        if let settingsMenu = settingsMenu, settingsMenu.contains(location) {
-            settingsMenu.handleTouch(location)
-            return
-        }
+        // Settings menu handles its own touches via touchesBegan
         
         // Check if touch is on a garden plot
         for row in gardenGrid {
@@ -457,6 +463,14 @@ extension GardenScene: OfflineProgressDelegate {
     
     func offlineProgressClosed() {
         offlineProgressNode?.hide()
+    }
+}
+
+// MARK: - Achievement Menu Delegate
+
+extension GardenScene: AchievementMenuDelegate {
+    func achievementMenuClosed() {
+        hideAchievementMenu()
     }
 }
 

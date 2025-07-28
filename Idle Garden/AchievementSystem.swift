@@ -315,8 +315,13 @@ class AchievementNotification: SKNode {
 
 // MARK: - Achievement Menu
 
+protocol AchievementMenuDelegate: AnyObject {
+    func achievementMenuClosed()
+}
+
 class AchievementMenuNode: SKSpriteNode {
     
+    weak var delegate: AchievementMenuDelegate?
     private var closeButton: SKSpriteNode?
     private var scrollView: SKNode?
     
@@ -431,7 +436,7 @@ class AchievementMenuNode: SKSpriteNode {
         let location = touch.location(in: self)
         
         if closeButton?.contains(location) == true {
-            removeFromParent()
+            delegate?.achievementMenuClosed()
         }
     }
 } 
